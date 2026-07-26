@@ -59,11 +59,7 @@ class Token(NamedTuple):
         print(f"{self.location()}: {self.prettystring()}", file=file)
 
 
-class TokenTree(NamedTuple):
-    """A node of a token tree.
-    PROBABLY TODO: rename to TokenTreeNode, and have TokenTree be an alias
-    for list[TokenTreeNode]"""
-
+class TokenTreeNode(NamedTuple):
     token: Token
     children: list['Tokentree'] = None
 
@@ -577,53 +573,53 @@ class TokenTreeBuilder:
 
     def __init__(self):
         self.stack = []
-        self.current_children = []
+        self.current_nodes = []
         self.directive_token = None
 
-    def build(self, tokens: Iterable[Token]) -> list[TokenTree]:
+    def build(self, tokens: Iterable[Token]) -> list[TokenTreeNode]:
         """Fully process a finite stream of tokens, returning a list of
         tree nodes.
         The tokens are assumed to represent the "top level" of some C code,
         and their end will be treated as an end-of-file."""
         self.process(tokens)
         self.finish()
-        return self.current_children
+        return self.current_nodes
 
-    def harvest(self) -> list[TokenTree]:
+    def harvest(self) -> list[TokenTreeNode]:
         """Return all top-level tree nodes produced so far, and forget
         them; that is, each call to harvest() pops tree nodes from an
         internal buffer."""
         if self.stack:
             # We're not at top level right now, so we have to extract the
             # top-level nodes from the stack
-            opener_token, expected_closer, children = self.stack[0]
+            opener_token, expected_closer, nodes = self.stack[0]
             self.stack[0] = (opener_token, expected_closer, [])
-            return children
+            return nodes
         else:
-            children = self.current_children
-            self.current_children = []
-            return children
+            nodes = self.current_nodes
+            self.current_nodes = []
+            return nodes
 
     def close_node(self, token: Token, closer: str):
         """Attempt to \"close\" the current tree node, e.g. process the '}'
         of a {...} structure"""
         if not self.stack:
             raise ParseError(token, f"Unexpected {token.prettystring()} at top level")
-        children = self.current_children
-        opener_token, expected_closer, self.current_children = self.stack.pop()
+        nodes = self.current_nodes
+        opener_token, expected_closer, self.current_nodes = self.stack.pop()
         if closer != expected_closer:
             raise ParseError(token,
                 f"Expected {expected_closer!r} "
                 f"to match {opener_token.prettystring()} at {opener_token.location()}), "
                 f"but got {closer!r}")
-        self.current_children.append(TokenTree(opener_token, children))
+        self.current_nodes.append(TokenTreeNode(opener_token, nodes))
 
     def finish(self):
         """To be called at the end of a finite stream of tokens, e.g. at the
         end of a file"""
         if self.stack:
             # Something was left unclosed!..
-            opener_token, expected_closer, children = self.stack[-1]
+            opener_token, expected_closer, nodes = self.stack[-1]
             raise ParseError(opener_token,
                 f"{opener_token.prettystring()} missing closing {expected_closer!r}")
 
@@ -633,16 +629,16 @@ class TokenTreeBuilder:
             punctuation = token.punctuation()
             if punctuation in OPENERS:
                 closer = CLOSERS[OPENERS.index(punctuation)]
-                self.stack.append((token, closer, self.current_children))
-                self.current_children = []
+                self.stack.append((token, closer, self.current_nodes))
+                self.current_nodes = []
             elif token.toktype in ('DEFMACRO', 'DEFINE', 'DIRECTIVE', 'INCLUDE'):
                 if self.directive_token is not None:
                     raise ParseError(token,
                         f"Nested directive {token.prettystring()} "
                         f"(inside {self.directive_token.prettystring()} "
                         f"at {self.directive_token.location()})")
-                self.stack.append((token, 'EOL', self.current_children))
-                self.current_children = []
+                self.stack.append((token, 'EOL', self.current_nodes))
+                self.current_nodes = []
                 self.directive_token = token
             elif punctuation in CLOSERS:
                 self.close_node(token, punctuation)
@@ -651,21 +647,21 @@ class TokenTreeBuilder:
                     self.close_node(token, 'EOL')
                     self.directive_token = None
                 else:
-                    # Don't create TokenTree instances for EOL tokens
+                    # Don't create TokenTreeNode instances for EOL tokens
                     pass
             else:
-                self.current_children.append(TokenTree(token))
+                self.current_nodes.append(TokenTreeNode(token))
 
 
-def build_toktree_from_file(filename: str) -> list[TokenTree]:
+def build_toktree_from_file(filename: str) -> list[TokenTreeNode]:
     tokens = Lexer(filename).tokenize(open(filename, 'r'))
     return TokenTreeBuilder().build(tokens)
 
 
 def main():
     filename = sys.argv[1]
-    for tree in build_toktree_from_file(filename):
-        tree.pprint()
+    for node in build_toktree_from_file(filename):
+        node.pprint()
 
 
 if __name__ == '__main__':
