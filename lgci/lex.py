@@ -21,7 +21,7 @@
 
 import re
 import sys
-from typing import NamedTuple, Iterable, Optional
+from typing import NamedTuple, Iterable, Iterator, Optional
 
 
 class Token(NamedTuple):
@@ -55,22 +55,26 @@ class Token(NamedTuple):
             parts.append(f'suf={self.suffix!r}')
         return ' '.join(parts)
 
-    def pprint(self):
-        print(f"{self.location()}: {self.prettystring()}")
+    def pprint(self, *, file=None):
+        print(f"{self.location()}: {self.prettystring()}", file=file)
 
 
 class TokenTree(NamedTuple):
+    """A node of a token tree.
+    PROBABLY TODO: rename to TokenTreeNode, and have TokenTree be an alias
+    for list[TokenTreeNode]"""
+
     token: Token
     children: list['Tokentree'] = None
 
-    def pprint(self, depth=0, with_locations=False):
+    def pprint(self, depth=0, with_locations=False, file=None):
         msg = '  ' * depth
         if with_locations:
             msg += self.token.location() + ': '
         msg += self.token.prettystring()
         print(msg)
         for child in (self.children or ()):
-            child.pprint(depth + 1, with_locations)
+            child.pprint(depth + 1, with_locations, file)
 
 
 class ParseError(Exception):
@@ -219,10 +223,10 @@ TOKEN_REGEX = re.compile('|'.join(
     for toktype, pattern in TOKEN_PATTERNS.items()))
 
 
-def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) -> Iterable[Token]:
-    r"""
+class Lexer:
+    r"""Consumes lines of C code, yielding a stream of tokens.
 
-        >>> for token in tokenize(r'''
+        >>> for token in Lexer().tokenize(r'''
         ...     int main() {
         ...         printf("Hello \"world\"!");
         ...     }
@@ -245,7 +249,7 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
 
         Lines separated by pairs (backslash, newline) are "pasted" together
         into a single line, i.e. an EOL token isn't emitted between them:
-        >>> for token in tokenize(r'''
+        >>> for token in Lexer().tokenize(r'''
         ...     line 1 \
         ...     line 2
         ... '''): token.pprint()
@@ -257,7 +261,7 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
         <fakefile>:3:11: EOL
 
         Multiline comments are handled:
-        >>> for token in tokenize(r'''
+        >>> for token in Lexer().tokenize(r'''
         ...     x /* some comment */ y /* more
         ...     and more\
         ...     comment */ z /* trailing off...
@@ -272,7 +276,7 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
         <fakefile>:4:18: COMMENT val=' trailing off...\n    oh no...'
 
         Preprocessor directives are handled:
-        >>> for token in tokenize(r'''
+        >>> for token in Lexer().tokenize(r'''
         ...     #include <stdio.h>
         ...     #define PASTE(X, Y) X ## Y
         ...     #define SIZE 64
@@ -296,26 +300,41 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
 
     """
 
-    # Support people passing us entire strings by accident, why not...
-    if isinstance(lines, str):
-        lines = lines.splitlines()
+    def __init__(self, filename: str = '<fakefile>', *, initial_row: int = 1):
+        self.filename = filename
+        self.row = initial_row
+        self.block_comment_token = None
 
-    line_i = 0
-    def iter_lines():
-        nonlocal line_i
+    def tokenize(self, lines: Iterable[str]) -> Iterator[Token]:
+        """Yield a stream of tokens from the given lines of C code.
+        The lines of code should be finite, and their end will be treated as
+        an end-of-file."""
+
+        # Support people passing us entire strings by accident, why not...
+        if isinstance(lines, str):
+            lines = lines.splitlines()
+
         for line in lines:
-            # Strip newlines so we can iterate over the output of open()
-            yield line.strip('\n')
-            line_i += 1
-    it = iter_lines()
+            yield from self.tokenize_line(line)
 
-    block_comment_token = None
+        yield from self.finish()
 
-    # Let's begin!
-    while True:
-        line = next(it, None)
-        if line is None:
-            break
+    def finish(self):
+        """To be called after a finite stream of lines has been processed,
+        e.g. at the end of a file"""
+
+        # If a block comment is unterminated, that's fine, just make sure we
+        # remember to emit it!
+        if self.block_comment_token is not None:
+            yield self.block_comment_token
+            self.block_comment_token = None
+
+    def tokenize_line(self, line: str) -> Iterator[Token]:
+        """Yield a stream of tokens from a single line of C code"""
+
+        # Strip newlines from the end so we can iterate directly over the
+        # output of open()
+        line = line.rstrip('\n')
 
         # Paste together lines joined with backslash + newline.
         # Actually, we don't really bother pasting the lines together, because
@@ -330,22 +349,23 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
         # If we're in the middle of a block comment, figure out if it ends
         # on this line, etc
         block_comment_chopped = 0
-        if block_comment_token is not None:
+        if self.block_comment_token is not None:
             end_index = line.find('*/')
             if end_index < 0:
                 # The block comment continues for this entire line!
-                block_comment_token = block_comment_token._replace(
-                    value=block_comment_token.value + '\n' + line)
-                continue
+                self.block_comment_token = self.block_comment_token._replace(
+                    value=self.block_comment_token.value + '\n' + line)
+                self.row += 1
+                return
             else:
                 # The block comment ends in this line, so chop it off,
                 # then process all remaining tokens in the line
-                block_comment_token = block_comment_token._replace(
-                    value=block_comment_token.value + '\n' + line[:end_index])
-                yield block_comment_token
+                self.block_comment_token = self.block_comment_token._replace(
+                    value=self.block_comment_token.value + '\n' + line[:end_index])
+                yield self.block_comment_token
                 line = line[end_index + 2:]
                 block_comment_chopped = end_index + 2
-                block_comment_token = None
+                self.block_comment_token = None
 
         # Parse tokens from this line
         for match in TOKEN_REGEX.finditer(line):
@@ -370,13 +390,10 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
                 is_block_comment = True
                 toktype = 'COMMENT'
 
-            row = initial_row + line_i
-            col = 1 + block_comment_chopped + match.start()
-
             token = Token(
-                filename=filename,
-                row=row,
-                col=col,
+                filename=self.filename,
+                row=self.row,
+                col=1 + block_comment_chopped + match.start(),
                 toktype=toktype,
                 value=value,
                 exponent=groups.get(f'{toktype}_EXPONENT'),
@@ -385,40 +402,37 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
 
             if is_block_comment and not match.group().endswith('*/'):
                 # We've found a block comment which doesn't end on this line!..
-                block_comment_token = token
+                self.block_comment_token = token
             else:
                 yield token
 
         # Maybe emit an EOL token?..
-        if not pasted and block_comment_token is None:
+        if not pasted and self.block_comment_token is None:
             yield Token(
-                filename=filename,
-                row=initial_row + line_i,
+                filename=self.filename,
+                row=self.row,
                 col=1 + block_comment_chopped + len(line),
                 toktype='EOL',
             )
 
-    # If a block comment is unterminated, that's fine, just make sure we
-    # remember to emit it!
-    if block_comment_token is not None:
-        yield block_comment_token
+        self.row += 1
 
 
 OPENERS = ('(', '[', '{')
 CLOSERS = (')', ']', '}')
 
 
-def build_toktree(tokens: Iterable[Token]) -> list[TokenTree]:
+class TokenTreeBuilder:
     r"""Builds a super-simple parse tree from a stream of tokens.
     Only captures tree structures which can be detected purely from token
-    types, like (...), [...], {...}, and #define...EOL.
+    types, e.g. (...), [...], {...}, and #define...EOL.
 
-        >>> for tree in build_toktree(tokenize(r'''
+        >>> for node in TokenTreeBuilder().build(Lexer().tokenize(r'''
         ...     #include <stdio.h>
         ...     int main(int argc, char *argv) {
         ...         printf("Hello %s\n", argv[1]);
         ...     }
-        ... ''')): tree.pprint()
+        ... ''')): node.pprint()
         INCLUDE val='<stdio.h>'
         IDENTIFIER val='int'
         IDENTIFIER val='main'
@@ -439,14 +453,14 @@ def build_toktree(tokens: Iterable[Token]) -> list[TokenTree]:
               DEC_INT val='1'
           PUNCTUATION val=';'
 
-        >>> for tree in build_toktree(tokenize(r'''
+        >>> for node in TokenTreeBuilder().build(Lexer().tokenize(r'''
         ...     #define PRINT printf("Ping!\n");
         ...     #define PRINT_VALUE(X) printf("Got: %i\n", X);
         ...     int main() {
         ...         PRINT
         ...         PRINT_VALUE(99)
         ...     }
-        ... ''')): tree.pprint()
+        ... ''')): node.pprint()
         DEFINE val='PRINT'
           IDENTIFIER val='printf'
           PUNCTUATION val='('
@@ -473,13 +487,13 @@ def build_toktree(tokens: Iterable[Token]) -> list[TokenTree]:
         Basically the whole reason we support "line pasting" (i.e. using
         backslash to escape newlines) is because people use it to define
         multi-line macros over multiple lines:
-        >>> for tree in build_toktree(tokenize(r'''
+        >>> for node in TokenTreeBuilder().build(Lexer().tokenize(r'''
         ...     #define SWAP(TYPE, X, Y) { \
         ...         TYPE temp = X; \
         ...         X = Y; \
         ...         Y = temp; \
         ...     }
-        ... ''')): tree.pprint()
+        ... ''')): node.pprint()
         DEFMACRO val='SWAP'
           PUNCTUATION val='('
             IDENTIFIER val='TYPE'
@@ -502,58 +516,150 @@ def build_toktree(tokens: Iterable[Token]) -> list[TokenTree]:
             IDENTIFIER val='temp'
             PUNCTUATION val=';'
 
-        >>> build_toktree(tokenize('{ ( )')) #doctest: +NORMALIZE_WHITESPACE
+    You can also use a builder to stream tokens in, and stream tree nodes out:
+
+        >>> builder = TokenTreeBuilder()
+
+        We process some input, and harvest only the top-level tree nodes:
+        >>> builder.process(Lexer().tokenize('1 + (2 + (3'))
+        >>> for node in builder.harvest(): node.pprint()
+        DEC_INT val='1'
+        PUNCTUATION val='+'
+
+        We process some more input, but no top-level tree nodes are available
+        for harvesting.
+        Tree nodes are being generated internally, but can't be harvested as
+        they are not top-level:
+        >>> builder.process(Lexer().tokenize('+ 4) +'))
+        >>> for node in builder.harvest(): node.pprint()
+
+        We process some more input, and are able to harvest top-level tree
+        nodes.
+        The non-top-level nodes which were generated earlier show up
+        underneath the top-level nodes we harvest:
+        >>> builder.process(Lexer().tokenize('5) * 100'))
+        >>> for node in builder.harvest(): node.pprint()
+        PUNCTUATION val='('
+          DEC_INT val='2'
+          PUNCTUATION val='+'
+          PUNCTUATION val='('
+            DEC_INT val='3'
+            PUNCTUATION val='+'
+            DEC_INT val='4'
+          PUNCTUATION val='+'
+          DEC_INT val='5'
+        PUNCTUATION val='*'
+        DEC_INT val='100'
+
+    Possible errors:
+
+        >>> TokenTreeBuilder().build(Lexer().tokenize('}'))
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:6: Expected '}' to match
-        PUNCTUATION val='{' at <fakefile>:1:1), but got 'EOF'
+        lgci.lex.ParseError: <fakefile>:1:1: Unexpected PUNCTUATION val='}' at top level
+
+        >>> TokenTreeBuilder().build(Lexer().tokenize('{ )'))
+        Traceback (most recent call last):
+         ...
+        lgci.lex.ParseError: <fakefile>:1:3: Expected '}' to match PUNCTUATION val='{' at <fakefile>:1:1), but got ')'
+
+        >>> TokenTreeBuilder().build(Lexer().tokenize('{ ( )'))
+        Traceback (most recent call last):
+         ...
+        lgci.lex.ParseError: <fakefile>:1:1: PUNCTUATION val='{' missing closing '}'
+
+        >>> TokenTreeBuilder().build(Lexer().tokenize('#define x #define y')) #doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+         ...
+        lgci.lex.ParseError: <fakefile>:1:11: Nested directive DEFINE val='y' (inside DEFINE val='x' at <fakefile>:1:1)
 
     """
-    stack = []
-    current_children = []
-    in_define = False
 
-    def close(closer: str):
-        nonlocal current_children
-        children = current_children
-        opener_token, expected_closer, current_children = stack.pop()
+    def __init__(self):
+        self.stack = []
+        self.current_children = []
+        self.directive_token = None
+
+    def build(self, tokens: Iterable[Token]) -> list[TokenTree]:
+        """Fully process a finite stream of tokens, returning a list of
+        tree nodes.
+        The tokens are assumed to represent the "top level" of some C code,
+        and their end will be treated as an end-of-file."""
+        self.process(tokens)
+        self.finish()
+        return self.current_children
+
+    def harvest(self) -> list[TokenTree]:
+        """Return all top-level tree nodes produced so far, and forget
+        them; that is, each call to harvest() pops tree nodes from an
+        internal buffer."""
+        if self.stack:
+            # We're not at top level right now, so we have to extract the
+            # top-level nodes from the stack
+            opener_token, expected_closer, children = self.stack[0]
+            self.stack[0] = (opener_token, expected_closer, [])
+            return children
+        else:
+            children = self.current_children
+            self.current_children = []
+            return children
+
+    def close_node(self, token: Token, closer: str):
+        """Attempt to \"close\" the current tree node, e.g. process the '}'
+        of a {...} structure"""
+        if not self.stack:
+            raise ParseError(token, f"Unexpected {token.prettystring()} at top level")
+        children = self.current_children
+        opener_token, expected_closer, self.current_children = self.stack.pop()
         if closer != expected_closer:
             raise ParseError(token,
                 f"Expected {expected_closer!r} "
                 f"to match {opener_token.prettystring()} at {opener_token.location()}), "
                 f"but got {closer!r}")
-        current_children.append(TokenTree(opener_token, children))
+        self.current_children.append(TokenTree(opener_token, children))
 
-    for token in tokens:
-        punctuation = token.punctuation()
-        if punctuation in OPENERS:
-            closer = CLOSERS[OPENERS.index(punctuation)]
-            stack.append((token, closer, current_children))
-            current_children = []
-        elif token.toktype in ('DEFMACRO', 'DEFINE', 'DIRECTIVE', 'INCLUDE'):
-            stack.append((token, 'EOL', current_children))
-            current_children = []
-            in_define = True
-        elif punctuation in CLOSERS:
-            close(punctuation)
-        elif token.toktype == 'EOL':
-            if in_define:
-                close('EOL')
-                in_define = False
+    def finish(self):
+        """To be called at the end of a finite stream of tokens, e.g. at the
+        end of a file"""
+        if self.stack:
+            # Something was left unclosed!..
+            opener_token, expected_closer, children = self.stack[-1]
+            raise ParseError(opener_token,
+                f"{opener_token.prettystring()} missing closing {expected_closer!r}")
+
+    def process(self, tokens: Iterable[Token]):
+        """Process a finite stream of tokens"""
+        for token in tokens:
+            punctuation = token.punctuation()
+            if punctuation in OPENERS:
+                closer = CLOSERS[OPENERS.index(punctuation)]
+                self.stack.append((token, closer, self.current_children))
+                self.current_children = []
+            elif token.toktype in ('DEFMACRO', 'DEFINE', 'DIRECTIVE', 'INCLUDE'):
+                if self.directive_token is not None:
+                    raise ParseError(token,
+                        f"Nested directive {token.prettystring()} "
+                        f"(inside {self.directive_token.prettystring()} "
+                        f"at {self.directive_token.location()})")
+                self.stack.append((token, 'EOL', self.current_children))
+                self.current_children = []
+                self.directive_token = token
+            elif punctuation in CLOSERS:
+                self.close_node(token, punctuation)
+            elif token.toktype == 'EOL':
+                if self.directive_token is not None:
+                    self.close_node(token, 'EOL')
+                    self.directive_token = None
+                else:
+                    # Don't create TokenTree instances for EOL tokens
+                    pass
             else:
-                # Don't create TokenTree instances for EOL tokens
-                pass
-        else:
-            current_children.append(TokenTree(token))
-    if stack:
-        # Guaranteed to fail... something was left unclosed!..
-        close('EOF')
-    return current_children
+                self.current_children.append(TokenTree(token))
 
 
 def build_toktree_from_file(filename: str) -> list[TokenTree]:
-    tokens = tokenize(open(filename, 'r'), filename)
-    return build_toktree(tokens)
+    tokens = Lexer(filename).tokenize(open(filename, 'r'))
+    return TokenTreeBuilder().build(tokens)
 
 
 def main():
