@@ -73,7 +73,11 @@ class TokenTree(NamedTuple):
             child.pprint(depth + 1, with_locations)
 
 
-class ParseError(Exception): pass
+class ParseError(Exception):
+
+    def __init__(self, token: Token, msg):
+        Exception.__init__(self, f"{token.location()}: {msg}")
+        self.token = token
 
 
 KEYWORDS = frozenset((
@@ -180,6 +184,7 @@ TOKEN_PATTERNS = {
     # and the opening parenthesis, so it's a special case for the tokenizer
     'DEFMACRO'    : r'#[ \t]*define[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)(?=\()',
 
+    'DEFINE'      : r'#[ \t]*define[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)',
     'DIRECTIVE'   : r'#[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)',
     'COMMENT'     : r'//(?P<VALUE>.*)',
     'BLOCKCOMMENT': r'/\*(?P<VALUE>.*?)(?:\*/|$)',
@@ -285,8 +290,7 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
         <fakefile>:3:27: PUNCTUATION val='##'
         <fakefile>:3:30: IDENTIFIER val='Y'
         <fakefile>:3:31: EOL
-        <fakefile>:4:5: DIRECTIVE val='define'
-        <fakefile>:4:13: IDENTIFIER val='SIZE'
+        <fakefile>:4:5: DEFINE val='SIZE'
         <fakefile>:4:18: DEC_INT val='64'
         <fakefile>:4:20: EOL
 
@@ -404,12 +408,12 @@ OPENERS = ('(', '[', '{')
 CLOSERS = (')', ']', '}')
 
 
-def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
+def build_toktree(tokens: Iterable[Token]) -> list[TokenTree]:
     r"""Builds a super-simple parse tree from a stream of tokens.
     Only captures tree structures which can be detected purely from token
     types, like (...), [...], {...}, and #define...EOL.
 
-        >>> for tree in toktree(tokenize(r'''
+        >>> for tree in build_toktree(tokenize(r'''
         ...     #include <stdio.h>
         ...     int main(int argc, char *argv) {
         ...         printf("Hello %s\n", argv[1]);
@@ -435,7 +439,7 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
               DEC_INT val='1'
           PUNCTUATION val=';'
 
-        >>> for tree in toktree(tokenize(r'''
+        >>> for tree in build_toktree(tokenize(r'''
         ...     #define PRINT printf("Ping!\n");
         ...     #define PRINT_VALUE(X) printf("Got: %i\n", X);
         ...     int main() {
@@ -443,8 +447,7 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
         ...         PRINT_VALUE(99)
         ...     }
         ... ''')): tree.pprint()
-        DIRECTIVE val='define'
-          IDENTIFIER val='PRINT'
+        DEFINE val='PRINT'
           IDENTIFIER val='printf'
           PUNCTUATION val='('
             STRING val='Ping!\\n'
@@ -470,7 +473,7 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
         Basically the whole reason we support "line pasting" (i.e. using
         backslash to escape newlines) is because people use it to define
         multi-line macros over multiple lines:
-        >>> for tree in toktree(tokenize(r'''
+        >>> for tree in build_toktree(tokenize(r'''
         ...     #define SWAP(TYPE, X, Y) { \
         ...         TYPE temp = X; \
         ...         X = Y; \
@@ -499,7 +502,7 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
             IDENTIFIER val='temp'
             PUNCTUATION val=';'
 
-        >>> toktree(tokenize('{ ( )')) #doctest: +NORMALIZE_WHITESPACE
+        >>> build_toktree(tokenize('{ ( )')) #doctest: +NORMALIZE_WHITESPACE
         Traceback (most recent call last):
          ...
         lgci.lex.ParseError: <fakefile>:1:6: Expected '}' to match
@@ -515,8 +518,8 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
         children = current_children
         opener_token, expected_closer, current_children = stack.pop()
         if closer != expected_closer:
-            raise ParseError(
-                f"{token.location()}: Expected {expected_closer!r} "
+            raise ParseError(token,
+                f"Expected {expected_closer!r} "
                 f"to match {opener_token.prettystring()} at {opener_token.location()}), "
                 f"but got {closer!r}")
         current_children.append(TokenTree(opener_token, children))
@@ -527,7 +530,7 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
             closer = CLOSERS[OPENERS.index(punctuation)]
             stack.append((token, closer, current_children))
             current_children = []
-        elif token.toktype in ('DEFMACRO', 'DIRECTIVE', 'INCLUDE'):
+        elif token.toktype in ('DEFMACRO', 'DEFINE', 'DIRECTIVE', 'INCLUDE'):
             stack.append((token, 'EOL', current_children))
             current_children = []
             in_define = True
@@ -548,10 +551,14 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
     return current_children
 
 
+def build_toktree_from_file(filename: str) -> list[TokenTree]:
+    tokens = tokenize(open(filename, 'r'), filename)
+    return build_toktree(tokens)
+
+
 def main():
     filename = sys.argv[1]
-    tokens = tokenize(open(filename, 'r'), filename)
-    for tree in toktree(tokens):
+    for tree in build_toktree_from_file(filename):
         tree.pprint()
 
 
