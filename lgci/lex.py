@@ -20,6 +20,7 @@
 """
 
 import re
+import sys
 from typing import NamedTuple, Iterable, Optional
 
 
@@ -182,9 +183,9 @@ TOKEN_PATTERNS = {
     'DIRECTIVE'   : r'#[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)',
     'COMMENT'     : r'//(?P<VALUE>.*)',
     'BLOCKCOMMENT': r'/\*(?P<VALUE>.*?)(?:\*/|$)',
-    'HEX'         : r'0[xX](?P<VALUE>[a-fA-F0-9]+)' + INT_SUFFIX,
-    'OCT'         : r'0(?P<VALUE>[0-9]+)' + INT_SUFFIX,
-    'DEC'         : r'(?P<VALUE>[0-9]+)' + INT_SUFFIX,
+    'HEX_INT'     : r'0[xX](?P<VALUE>[a-fA-F0-9]+)' + INT_SUFFIX,
+    'OCT_INT'     : r'0(?P<VALUE>[0-9]+)' + INT_SUFFIX,
+    'DEC_INT'     : r'(?P<VALUE>[0-9]+)' + INT_SUFFIX,
 
     # NOTE: all of these patterns will result in a Token.toktype of 'FLOAT'
     'FLOAT1'      : r'(?P<VALUE>[0-9]+)' + EXPONENT + f'{FLOAT_SUFFIX}?',
@@ -245,9 +246,9 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
         ... '''): token.pprint()
         <fakefile>:1:1: EOL
         <fakefile>:2:5: IDENTIFIER val='line'
-        <fakefile>:2:10: DEC val='1'
+        <fakefile>:2:10: DEC_INT val='1'
         <fakefile>:3:5: IDENTIFIER val='line'
-        <fakefile>:3:10: DEC val='2'
+        <fakefile>:3:10: DEC_INT val='2'
         <fakefile>:3:11: EOL
 
         Multiline comments are handled:
@@ -286,7 +287,7 @@ def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) 
         <fakefile>:3:31: EOL
         <fakefile>:4:5: DIRECTIVE val='define'
         <fakefile>:4:13: IDENTIFIER val='SIZE'
-        <fakefile>:4:18: DEC val='64'
+        <fakefile>:4:18: DEC_INT val='64'
         <fakefile>:4:20: EOL
 
     """
@@ -431,7 +432,7 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
             PUNCTUATION val=','
             IDENTIFIER val='argv'
             PUNCTUATION val='['
-              DEC val='1'
+              DEC_INT val='1'
           PUNCTUATION val=';'
 
         >>> for tree in toktree(tokenize(r'''
@@ -464,7 +465,7 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
           IDENTIFIER val='PRINT'
           IDENTIFIER val='PRINT_VALUE'
           PUNCTUATION val='('
-            DEC val='99'
+            DEC_INT val='99'
 
         Basically the whole reason we support "line pasting" (i.e. using
         backslash to escape newlines) is because people use it to define
@@ -526,7 +527,7 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
             closer = CLOSERS[OPENERS.index(punctuation)]
             stack.append((token, closer, current_children))
             current_children = []
-        elif token.toktype == 'DEFMACRO' or token.directive() == 'define':
+        elif token.toktype in ('DEFMACRO', 'DIRECTIVE', 'INCLUDE'):
             stack.append((token, 'EOL', current_children))
             current_children = []
             in_define = True
@@ -545,3 +546,14 @@ def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
         # Guaranteed to fail... something was left unclosed!..
         close('EOF')
     return current_children
+
+
+def main():
+    filename = sys.argv[1]
+    tokens = tokenize(open(filename, 'r'), filename)
+    for tree in toktree(tokens):
+        tree.pprint()
+
+
+if __name__ == '__main__':
+    main()
