@@ -20,7 +20,8 @@
 """
 
 import re
-from typing import NamedTuple
+from typing import NamedTuple, Iterable, Optional
+
 
 class Token(NamedTuple):
     filename: str
@@ -31,7 +32,19 @@ class Token(NamedTuple):
     exponent: str = None
     suffix: str = None
 
-    def pprint(self):
+    def punctuation(self) -> Optional[str]:
+        return self.value if self.toktype == 'PUNCTUATION' else None
+
+    def keyword(self) -> Optional[str]:
+        return self.value if self.toktype == 'KEYWORD' else None
+
+    def directive(self) -> Optional[str]:
+        return self.value if self.toktype == 'DIRECTIVE' else None
+
+    def location(self) -> str:
+        return f'{self.filename}:{self.row}:{self.col}'
+
+    def prettystring(self) -> str:
         parts = [self.toktype]
         if self.value:
             parts.append(f'val={self.value!r}')
@@ -39,7 +52,28 @@ class Token(NamedTuple):
             parts.append(f'exp={self.exponent!r}')
         if self.suffix:
             parts.append(f'suf={self.suffix!r}')
-        print(f"{self.filename}:{self.row}:{self.col}: " + ' '.join(parts))
+        return ' '.join(parts)
+
+    def pprint(self):
+        print(f"{self.location()}: {self.prettystring()}")
+
+
+class TokenTree(NamedTuple):
+    token: Token
+    children: list['Tokentree'] = None
+
+    def pprint(self, depth=0, with_locations=False):
+        msg = '  ' * depth
+        if with_locations:
+            msg += self.token.location() + ': '
+        msg += self.token.prettystring()
+        print(msg)
+        for child in (self.children or ()):
+            child.pprint(depth + 1, with_locations)
+
+
+class ParseError(Exception): pass
+
 
 KEYWORDS = frozenset((
     'auto',
@@ -75,6 +109,7 @@ KEYWORDS = frozenset((
     'volatile',
     'while',
 ))
+
 
 # NOTE: the order matters, e.g. '++' must come before '+'
 PUNCTUATION = (
@@ -128,6 +163,7 @@ PUNCTUATION = (
     '#',
 )
 
+
 EXPONENT      = r'[Ee](?P<EXPONENT>[+-]?[0-9]+)'
 FLOAT_SUFFIX  = r'(?P<SUFFIX>[fFlL])'
 INT_SUFFIX    = r'(?P<SUFFIX>[uUlL]*)'
@@ -176,7 +212,8 @@ TOKEN_REGEX = re.compile('|'.join(
     f'(?P<{toktype}>' + pattern.replace('?P<', f'?P<{toktype}_') + ')'
     for toktype, pattern in TOKEN_PATTERNS.items()))
 
-def tokenize(lines, filename: str = '<fakefile>', initial_row=1):
+
+def tokenize(lines: Iterable[str], filename: str = '<fakefile>', initial_row=1) -> Iterable[Token]:
     r"""
 
         >>> for token in tokenize(r'''
@@ -360,3 +397,151 @@ def tokenize(lines, filename: str = '<fakefile>', initial_row=1):
     # remember to emit it!
     if block_comment_token is not None:
         yield block_comment_token
+
+
+OPENERS = ('(', '[', '{')
+CLOSERS = (')', ']', '}')
+
+
+def toktree(tokens: Iterable[Token]) -> list[TokenTree]:
+    r"""Builds a super-simple parse tree from a stream of tokens.
+    Only captures tree structures which can be detected purely from token
+    types, like (...), [...], {...}, and #define...EOL.
+
+        >>> for tree in toktree(tokenize(r'''
+        ...     #include <stdio.h>
+        ...     int main(int argc, char *argv) {
+        ...         printf("Hello %s\n", argv[1]);
+        ...     }
+        ... ''')): tree.pprint()
+        INCLUDE val='<stdio.h>'
+        IDENTIFIER val='int'
+        IDENTIFIER val='main'
+        PUNCTUATION val='('
+          IDENTIFIER val='int'
+          IDENTIFIER val='argc'
+          PUNCTUATION val=','
+          IDENTIFIER val='char'
+          PUNCTUATION val='*'
+          IDENTIFIER val='argv'
+        PUNCTUATION val='{'
+          IDENTIFIER val='printf'
+          PUNCTUATION val='('
+            STRING val='Hello %s\\n'
+            PUNCTUATION val=','
+            IDENTIFIER val='argv'
+            PUNCTUATION val='['
+              DEC val='1'
+          PUNCTUATION val=';'
+
+        >>> for tree in toktree(tokenize(r'''
+        ...     #define PRINT printf("Ping!\n");
+        ...     #define PRINT_VALUE(X) printf("Got: %i\n", X);
+        ...     int main() {
+        ...         PRINT
+        ...         PRINT_VALUE(99)
+        ...     }
+        ... ''')): tree.pprint()
+        DIRECTIVE val='define'
+          IDENTIFIER val='PRINT'
+          IDENTIFIER val='printf'
+          PUNCTUATION val='('
+            STRING val='Ping!\\n'
+          PUNCTUATION val=';'
+        DEFMACRO val='PRINT_VALUE'
+          PUNCTUATION val='('
+            IDENTIFIER val='X'
+          IDENTIFIER val='printf'
+          PUNCTUATION val='('
+            STRING val='Got: %i\\n'
+            PUNCTUATION val=','
+            IDENTIFIER val='X'
+          PUNCTUATION val=';'
+        IDENTIFIER val='int'
+        IDENTIFIER val='main'
+        PUNCTUATION val='('
+        PUNCTUATION val='{'
+          IDENTIFIER val='PRINT'
+          IDENTIFIER val='PRINT_VALUE'
+          PUNCTUATION val='('
+            DEC val='99'
+
+        Basically the whole reason we support "line pasting" (i.e. using
+        backslash to escape newlines) is because people use it to define
+        multi-line macros over multiple lines:
+        >>> for tree in toktree(tokenize(r'''
+        ...     #define SWAP(TYPE, X, Y) { \
+        ...         TYPE temp = X; \
+        ...         X = Y; \
+        ...         Y = temp; \
+        ...     }
+        ... ''')): tree.pprint()
+        DEFMACRO val='SWAP'
+          PUNCTUATION val='('
+            IDENTIFIER val='TYPE'
+            PUNCTUATION val=','
+            IDENTIFIER val='X'
+            PUNCTUATION val=','
+            IDENTIFIER val='Y'
+          PUNCTUATION val='{'
+            IDENTIFIER val='TYPE'
+            IDENTIFIER val='temp'
+            PUNCTUATION val='='
+            IDENTIFIER val='X'
+            PUNCTUATION val=';'
+            IDENTIFIER val='X'
+            PUNCTUATION val='='
+            IDENTIFIER val='Y'
+            PUNCTUATION val=';'
+            IDENTIFIER val='Y'
+            PUNCTUATION val='='
+            IDENTIFIER val='temp'
+            PUNCTUATION val=';'
+
+        >>> toktree(tokenize('{ ( )')) #doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+         ...
+        lgci.lex.ParseError: <fakefile>:1:6: Expected '}' to match
+        PUNCTUATION val='{' at <fakefile>:1:1), but got 'EOF'
+
+    """
+    stack = []
+    current_children = []
+    in_define = False
+
+    def close(closer: str):
+        nonlocal current_children
+        children = current_children
+        opener_token, expected_closer, current_children = stack.pop()
+        if closer != expected_closer:
+            raise ParseError(
+                f"{token.location()}: Expected {expected_closer!r} "
+                f"to match {opener_token.prettystring()} at {opener_token.location()}), "
+                f"but got {closer!r}")
+        current_children.append(TokenTree(opener_token, children))
+
+    for token in tokens:
+        punctuation = token.punctuation()
+        if punctuation in OPENERS:
+            closer = CLOSERS[OPENERS.index(punctuation)]
+            stack.append((token, closer, current_children))
+            current_children = []
+        elif token.toktype == 'DEFMACRO' or token.directive() == 'define':
+            stack.append((token, 'EOL', current_children))
+            current_children = []
+            in_define = True
+        elif punctuation in CLOSERS:
+            close(punctuation)
+        elif token.toktype == 'EOL':
+            if in_define:
+                close('EOL')
+                in_define = False
+            else:
+                # Don't create TokenTree instances for EOL tokens
+                pass
+        else:
+            current_children.append(TokenTree(token))
+    if stack:
+        # Guaranteed to fail... something was left unclosed!..
+        close('EOF')
+    return current_children
