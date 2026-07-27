@@ -1,0 +1,22 @@
+
+[ ] Probably do the preprocessor as a separate step?..
+    Errr but we would like to be able to do stuff at a REPL, so we want to
+    be able to dynamically #define and #undef.
+    So we want a Parser object into which we can feed code snippets, and
+    entire files -- e.g. we probably want to support #include (if user enables
+    it, perhaps only for files living under certain absolute paths, etc).
+    Oh, but actually doesn't that mean we also need a streaming lexer?..
+
+    [X] So our tokenize() needs to be turned into a Lexer class, probably.
+        With at least enough state to be able to remember if previous line was
+        being "pasted", and whether we're in the middle of a block comment.
+
+    [X] And then we need to be able to stream TokenTree instances from a
+        stream of tokens.
+
+    [X] Rename TokenTree to TokenTreeNode
+
+    [ ] Handle # and ## operators
+
+    [ ] Replace my terminology, "definitions" and "macros", with the official
+        terminology, "macros" and "function-like macros"

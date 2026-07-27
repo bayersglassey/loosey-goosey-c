@@ -25,13 +25,16 @@ from typing import NamedTuple, Iterable, Iterator, Optional
 
 
 class Token(NamedTuple):
-    filename: str
-    row: int
-    col: int
     toktype: str
+    filename: str
+    row: int = 1
+    col: int = 1
     value: str = None
     exponent: str = None
     suffix: str = None
+
+    def identifier(self) -> Optional[str]:
+        return self.value if self.toktype == 'IDENTIFIER' else None
 
     def punctuation(self) -> Optional[str]:
         return self.value if self.toktype == 'PUNCTUATION' else None
@@ -40,7 +43,16 @@ class Token(NamedTuple):
         return self.value if self.toktype == 'KEYWORD' else None
 
     def directive(self) -> Optional[str]:
-        return self.value if self.toktype == 'DIRECTIVE' else None
+        if self.toktype == 'DIRECTIVE':
+            return self.value
+        elif self.toktype == 'INCLUDE':
+            return 'include'
+        elif self.toktype in ('DEFINE', 'DEFMACRO'):
+            return 'define'
+        elif self.toktype == 'UNDEF':
+            return 'undef'
+        else:
+            return None
 
     def location(self) -> str:
         return f'{self.filename}:{self.row}:{self.col}'
@@ -71,6 +83,90 @@ class TokenTreeNode(NamedTuple):
         print(msg)
         for child in (self.children or ()):
             child.pprint(depth + 1, with_locations, file)
+
+    def parse_parenlist(self) -> list[list['TokenTreeNode']]:
+        """Parses a parenthesized list
+
+            >>> [node] = TokenTreeBuilder().build("()")
+            >>> node.parse_parenlist()
+            []
+
+            >>> [node] = TokenTreeBuilder().build("(x y, (1, 2), , hello,)")
+            >>> for i, elem in enumerate(node.parse_parenlist()):
+            ...     print(f"=== Element {i}:")
+            ...     for child in elem:
+            ...         child.pprint()
+            === Element 0:
+            IDENTIFIER val='x'
+            IDENTIFIER val='y'
+            === Element 1:
+            PUNCTUATION val='('
+              DEC_INT val='1'
+              PUNCTUATION val=','
+              DEC_INT val='2'
+            === Element 2:
+            === Element 3:
+            IDENTIFIER val='hello'
+
+            >>> [node] = TokenTreeBuilder().build("hello")
+            >>> node.parse_parenlist()
+            Traceback (most recent call last):
+             ...
+            lgci.lex.ParseError: <fakefile>:1:1: Can't parse parenthesized list from: IDENTIFIER val='hello'
+
+        """
+        if self.token.punctuation() != '(':
+            raise ParseError(self.token, f"Can't parse parenthesized list from: {self.token.prettystring()}")
+        return self.parse_list(self.children, ',')
+
+    def parse_codeblock(self) -> list[list['TokenTreeNode']]:
+        """Parses a semicolon-separated list surrounded by curly braces
+
+            >>> [node] = TokenTreeBuilder().build("{}")
+            >>> node.parse_codeblock()
+            []
+
+            >>> [node] = TokenTreeBuilder().build("{x y; {1; 2}; ; hello;}")
+            >>> for i, elem in enumerate(node.parse_codeblock()):
+            ...     print(f"=== Element {i}:")
+            ...     for child in elem:
+            ...         child.pprint()
+            === Element 0:
+            IDENTIFIER val='x'
+            IDENTIFIER val='y'
+            === Element 1:
+            PUNCTUATION val='{'
+              DEC_INT val='1'
+              PUNCTUATION val=';'
+              DEC_INT val='2'
+            === Element 2:
+            === Element 3:
+            IDENTIFIER val='hello'
+
+            >>> [node] = TokenTreeBuilder().build("hello")
+            >>> node.parse_codeblock()
+            Traceback (most recent call last):
+             ...
+            lgci.lex.ParseError: <fakefile>:1:1: Can't parse code block from: IDENTIFIER val='hello'
+
+        """
+        if self.token.punctuation() != '{':
+            raise ParseError(self.token, f"Can't parse code block from: {self.token.prettystring()}")
+        return self.parse_list(self.children, ';')
+
+    @staticmethod
+    def parse_list(nodes: Iterable['TokenTreeNode'], separator: str) -> list[list['TokenTreeNode']]:
+        elems: list[list[TokenTreeNode]] = []
+        elem: list[TokenTreeNode] = []
+        for node in nodes:
+            if node.token.punctuation() == separator:
+                elems.append(elem)
+                elem = []
+            else:
+                elem.append(node)
+        if elem:
+            elems.append(elem)
+        return elems
 
 
 class ParseError(Exception):
@@ -185,6 +281,7 @@ TOKEN_PATTERNS = {
     'DEFMACRO'    : r'#[ \t]*define[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)(?=\()',
 
     'DEFINE'      : r'#[ \t]*define[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)',
+    'UNDEF'       : r'#[ \t]*undef[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)',
     'DIRECTIVE'   : r'#[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)',
     'COMMENT'     : r'//(?P<VALUE>.*)',
     'BLOCKCOMMENT': r'/\*(?P<VALUE>.*?)(?:\*/|$)',
@@ -294,6 +391,18 @@ class Lexer:
         <fakefile>:4:18: DEC_INT val='64'
         <fakefile>:4:20: EOL
 
+    Possible errors:
+
+        >>> list(Lexer().tokenize('"hello" "world'))
+        Traceback (most recent call last):
+         ...
+        lgci.lex.ParseError: <fakefile>:1:9: Unexpected character: '"'
+
+        >>> list(Lexer().tokenize('hello #define y'))
+        Traceback (most recent call last):
+         ...
+        lgci.lex.ParseError: <fakefile>:1:7: Directive not first token of line: DEFINE val='y'
+
     """
 
     def __init__(self, filename: str = '<fakefile>', *, initial_row: int = 1):
@@ -364,6 +473,7 @@ class Lexer:
                 self.block_comment_token = None
 
         # Parse tokens from this line
+        directives_ok = True
         for match in TOKEN_REGEX.finditer(line):
             groups = match.groupdict()
             toktype = next(toktype for toktype in TOKEN_PATTERNS
@@ -396,6 +506,15 @@ class Lexer:
                 suffix=groups.get(f'{toktype}_SUFFIX'),
             )
 
+            if toktype == 'BADCHAR':
+                raise ParseError(token, f"Unexpected character: {value!r}")
+
+            if token.directive() and not directives_ok:
+                raise ParseError(token, f"Directive not first token of line: {token.prettystring()}")
+
+            if toktype != 'COMMENT':
+                directives_ok = False
+
             if is_block_comment and not match.group().endswith('*/'):
                 # We've found a block comment which doesn't end on this line!..
                 self.block_comment_token = token
@@ -423,12 +542,12 @@ class TokenTreeBuilder:
     Only captures tree structures which can be detected purely from token
     types, e.g. (...), [...], {...}, and #define...EOL.
 
-        >>> for node in TokenTreeBuilder().build(Lexer().tokenize(r'''
+        >>> for node in TokenTreeBuilder().build(r'''
         ...     #include <stdio.h>
         ...     int main(int argc, char *argv) {
         ...         printf("Hello %s\n", argv[1]);
         ...     }
-        ... ''')): node.pprint()
+        ... '''): node.pprint()
         INCLUDE val='<stdio.h>'
         IDENTIFIER val='int'
         IDENTIFIER val='main'
@@ -449,14 +568,14 @@ class TokenTreeBuilder:
               DEC_INT val='1'
           PUNCTUATION val=';'
 
-        >>> for node in TokenTreeBuilder().build(Lexer().tokenize(r'''
+        >>> for node in TokenTreeBuilder().build(r'''
         ...     #define PRINT printf("Ping!\n");
         ...     #define PRINT_VALUE(X) printf("Got: %i\n", X);
         ...     int main() {
         ...         PRINT
         ...         PRINT_VALUE(99)
         ...     }
-        ... ''')): node.pprint()
+        ... '''): node.pprint()
         DEFINE val='PRINT'
           IDENTIFIER val='printf'
           PUNCTUATION val='('
@@ -483,13 +602,13 @@ class TokenTreeBuilder:
         Basically the whole reason we support "line pasting" (i.e. using
         backslash to escape newlines) is because people use it to define
         multi-line macros over multiple lines:
-        >>> for node in TokenTreeBuilder().build(Lexer().tokenize(r'''
+        >>> for node in TokenTreeBuilder().build(r'''
         ...     #define SWAP(TYPE, X, Y) { \
         ...         TYPE temp = X; \
         ...         X = Y; \
         ...         Y = temp; \
         ...     }
-        ... ''')): node.pprint()
+        ... '''): node.pprint()
         DEFMACRO val='SWAP'
           PUNCTUATION val='('
             IDENTIFIER val='TYPE'
@@ -549,25 +668,20 @@ class TokenTreeBuilder:
 
     Possible errors:
 
-        >>> TokenTreeBuilder().build(Lexer().tokenize('}'))
+        >>> TokenTreeBuilder().build('}')
         Traceback (most recent call last):
          ...
         lgci.lex.ParseError: <fakefile>:1:1: Unexpected PUNCTUATION val='}' at top level
 
-        >>> TokenTreeBuilder().build(Lexer().tokenize('{ )'))
+        >>> TokenTreeBuilder().build('{ )')
         Traceback (most recent call last):
          ...
         lgci.lex.ParseError: <fakefile>:1:3: Expected '}' to match PUNCTUATION val='{' at <fakefile>:1:1), but got ')'
 
-        >>> TokenTreeBuilder().build(Lexer().tokenize('{ ( )'))
+        >>> TokenTreeBuilder().build('{ ( )')
         Traceback (most recent call last):
          ...
         lgci.lex.ParseError: <fakefile>:1:1: PUNCTUATION val='{' missing closing '}'
-
-        >>> TokenTreeBuilder().build(Lexer().tokenize('#define x #define y')) #doctest: +NORMALIZE_WHITESPACE
-        Traceback (most recent call last):
-         ...
-        lgci.lex.ParseError: <fakefile>:1:11: Nested directive DEFINE val='y' (inside DEFINE val='x' at <fakefile>:1:1)
 
     """
 
@@ -581,6 +695,9 @@ class TokenTreeBuilder:
         tree nodes.
         The tokens are assumed to represent the "top level" of some C code,
         and their end will be treated as an end-of-file."""
+        if isinstance(tokens, str):
+            # Support caller passing us a string, why not, handy for doctests
+            tokens = Lexer().tokenize(tokens)
         self.process(tokens)
         self.finish()
         return self.current_nodes
@@ -631,12 +748,10 @@ class TokenTreeBuilder:
                 closer = CLOSERS[OPENERS.index(punctuation)]
                 self.stack.append((token, closer, self.current_nodes))
                 self.current_nodes = []
-            elif token.toktype in ('DEFMACRO', 'DEFINE', 'DIRECTIVE', 'INCLUDE'):
-                if self.directive_token is not None:
-                    raise ParseError(token,
-                        f"Nested directive {token.prettystring()} "
-                        f"(inside {self.directive_token.prettystring()} "
-                        f"at {self.directive_token.location()})")
+            elif token.directive():
+                # NOTE: the Lexer guarantees that two directives can't appear
+                # on the same line, so this assertion is just a sanity check
+                assert self.directive_token is None
                 self.stack.append((token, 'EOL', self.current_nodes))
                 self.current_nodes = []
                 self.directive_token = token
