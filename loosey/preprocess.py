@@ -82,8 +82,8 @@ class Preprocessor:
         ...     #define SIZE 3 * K
         ...     #define DUMMY hello
         ...     #undef DUMMY
-        ...     #define MALLOC(VAR, SIZE) \
-        ...         VAR = malloc(SIZE);
+        ...     #define MALLOC(VAR, _SIZE) \
+        ...         VAR = malloc(_SIZE);
         ... '''): node.pprint()
 
         The definitions are stored for use in subsequent processing:
@@ -95,12 +95,12 @@ class Preprocessor:
           DEC_INT val='3'
           PUNCTUATION val='*'
           IDENTIFIER val='K'
-        #define MALLOC(VAR, SIZE)
+        #define MALLOC(VAR, _SIZE)
           IDENTIFIER val='VAR'
           PUNCTUATION val='='
           IDENTIFIER val='malloc'
           PUNCTUATION val='('
-            IDENTIFIER val='SIZE'
+            IDENTIFIER val='_SIZE'
           PUNCTUATION val=';'
 
         The definitions are expanded in the usual way:
