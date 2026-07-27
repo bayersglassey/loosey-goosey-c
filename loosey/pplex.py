@@ -31,8 +31,14 @@ class Token(NamedTuple):
     col: int = 1
     value: str = ''
 
-    def location(self) -> str:
-        return f'{self.filename}:{self.row}:{self.col}'
+    # Used e.g. when "pasting" tokens together
+    parents: tuple['Token', ...] = ()
+
+    def location(self, with_parents: bool = False) -> str:
+        msg = f'{self.filename}:{self.row}:{self.col}'
+        if with_parents and self.parents:
+            msg += f" (from: {', '.join(parent.location() for parent in self.parents)})"
+        return msg
 
     def prettystring(self) -> str:
         return f"{self.toktype}({self.value!r})"
@@ -121,6 +127,11 @@ TOKEN_PATTERNS = {
     # the macro name and the opening parenthesis, so it's a special case
     # for the tokenizer
     'FUNC_DEFINE' : r'#[ \t]*define[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)(?=\()',
+
+    # It's handy for macro definitions to correspond to a single token,
+    # whose .value is the macro name!.. so this is a special case of the
+    # tokenizer
+    'DEFINE' : r'#[ \t]*define[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)',
 
     # The preprocessor operators are '#' or '##'.
     # NOTE: the '#' operator might be part of a directive (e.g. #define, #if)
@@ -238,9 +249,7 @@ class Lexer:
         <fakefile>:3:27: PP_OPERATOR('##')
         <fakefile>:3:30: IDENTIFIER('Y')
         <fakefile>:3:31: EOL('')
-        <fakefile>:4:5: PP_OPERATOR('#')
-        <fakefile>:4:6: IDENTIFIER('define')
-        <fakefile>:4:13: IDENTIFIER('SIZE')
+        <fakefile>:4:5: DEFINE('SIZE')
         <fakefile>:4:18: NUMBER('64')
         <fakefile>:4:20: EOL('')
 
