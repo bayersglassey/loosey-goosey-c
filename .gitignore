@@ -1,3 +1,6 @@
 *.swp
 *.pyc
 venv/
+html/
+scratch.py
+.coverage
