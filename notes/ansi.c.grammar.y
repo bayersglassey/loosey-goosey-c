@@ -1,7 +1,6 @@
 /*
 
 I copy-pasted this ANSI C yacc grammmar file from the Internet:
-
 https://www.lysator.liu.se/c/ANSI-C-grammar-y.html
 
     In 1985, Jeff Lee published his Yacc grammar (which is accompanied by a
