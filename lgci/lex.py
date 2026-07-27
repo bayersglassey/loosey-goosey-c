@@ -769,8 +769,19 @@ class TokenTreeBuilder:
 
 
 def build_toktree_from_file(filename: str) -> list[TokenTreeNode]:
-    tokens = Lexer(filename).tokenize(open(filename, 'r'))
-    return TokenTreeBuilder().build(tokens)
+    if filename == '-':
+        filename = '<stdin>'
+        file = sys.stdin
+        should_close = False
+    else:
+        file = open(filename, 'r')
+        should_close = True
+    try:
+        tokens = Lexer(filename).tokenize(file)
+        return TokenTreeBuilder().build(tokens)
+    finally:
+        if should_close:
+            file.close()
 
 
 def main():
