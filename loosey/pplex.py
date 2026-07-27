@@ -249,7 +249,7 @@ class Lexer:
         >>> list(Lexer().tokenize('"hello" "world'))
         Traceback (most recent call last):
          ...
-        lgci.pplex.ParseError: <fakefile>:1:9: Unexpected character: '"'
+        loosey.pplex.ParseError: <fakefile>:1:9: Unexpected character: '"'
 
     """
 

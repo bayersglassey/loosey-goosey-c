@@ -2,7 +2,7 @@ import os
 from inspect import isgeneratorfunction
 from functools import wraps
 
-from lgci.lex import Token, TokenTreeNode
+from loosey.lex import Token, TokenTreeNode
 
 
 NoneType = type(None)

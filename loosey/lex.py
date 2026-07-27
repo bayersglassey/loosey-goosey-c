@@ -112,7 +112,7 @@ class TokenTreeNode(NamedTuple):
             >>> node.parse_parenlist()
             Traceback (most recent call last):
              ...
-            lgci.lex.ParseError: <fakefile>:1:1: Can't parse parenthesized list from: IDENTIFIER val='hello'
+            loosey.lex.ParseError: <fakefile>:1:1: Can't parse parenthesized list from: IDENTIFIER val='hello'
 
         """
         if self.token.punctuation() != '(':
@@ -147,7 +147,7 @@ class TokenTreeNode(NamedTuple):
             >>> node.parse_codeblock()
             Traceback (most recent call last):
              ...
-            lgci.lex.ParseError: <fakefile>:1:1: Can't parse code block from: IDENTIFIER val='hello'
+            loosey.lex.ParseError: <fakefile>:1:1: Can't parse code block from: IDENTIFIER val='hello'
 
         """
         if self.token.punctuation() != '{':
@@ -396,12 +396,12 @@ class Lexer:
         >>> list(Lexer().tokenize('"hello" "world'))
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:9: Unexpected character: '"'
+        loosey.lex.ParseError: <fakefile>:1:9: Unexpected character: '"'
 
         >>> list(Lexer().tokenize('hello #define y'))
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:7: Directive not first token of line: DEFINE val='y'
+        loosey.lex.ParseError: <fakefile>:1:7: Directive not first token of line: DEFINE val='y'
 
     """
 
@@ -671,17 +671,17 @@ class TokenTreeBuilder:
         >>> TokenTreeBuilder().build('}')
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:1: Unexpected PUNCTUATION val='}' at top level
+        loosey.lex.ParseError: <fakefile>:1:1: Unexpected PUNCTUATION val='}' at top level
 
         >>> TokenTreeBuilder().build('{ )')
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:3: Expected '}' to match PUNCTUATION val='{' at <fakefile>:1:1), but got ')'
+        loosey.lex.ParseError: <fakefile>:1:3: Expected '}' to match PUNCTUATION val='{' at <fakefile>:1:1), but got ')'
 
         >>> TokenTreeBuilder().build('{ ( )')
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:1: PUNCTUATION val='{' missing closing '}'
+        loosey.lex.ParseError: <fakefile>:1:1: PUNCTUATION val='{' missing closing '}'
 
     """
 

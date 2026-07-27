@@ -39,9 +39,9 @@
 import sys
 from typing import NamedTuple, Iterable, Iterator, Optional
 
-from lgci.recursion import debug_recursion
-from lgci.iter import FancyIterator
-from lgci.lex import (
+from loosey.recursion import debug_recursion
+from loosey.iter import FancyIterator
+from loosey.lex import (
     ParseError,
     Token,
     TokenTreeNode,
@@ -137,17 +137,17 @@ class Preprocessor:
         >>> list(Preprocessor().process('#define X(Y Z)'))
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:10: Param 1 consists of 2 tokens
+        loosey.lex.ParseError: <fakefile>:1:10: Param 1 consists of 2 tokens
 
         >>> list(Preprocessor().process('#define X(1, 2)'))
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:11: Param 1 is not an identifier: DEC_INT val='1'
+        loosey.lex.ParseError: <fakefile>:1:11: Param 1 is not an identifier: DEC_INT val='1'
 
         >>> list(Preprocessor().process('#undef X Y'))
         Traceback (most recent call last):
          ...
-        lgci.lex.ParseError: <fakefile>:1:1: Extra tokens after 'X'
+        loosey.lex.ParseError: <fakefile>:1:1: Extra tokens after 'X'
 
     """
 

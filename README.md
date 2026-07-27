@@ -76,7 +76,7 @@ For example, here is a tree with a directive at the root (DEFMACRO), and
 some parenthesized child nodes (`PUNCTUATION val='('`), with children of
 their own:
 ```
-$ echo "#define ADD(X, Y) (X + Y)" | python -m lgci.lex -
+$ echo "#define ADD(X, Y) (X + Y)" | python -m loosey.lex -
 DEFMACRO val='ADD'
   PUNCTUATION val='('
     IDENTIFIER val='X'
@@ -98,7 +98,7 @@ $ echo '
       return VALUE
   #undef VALUE
   }
-  ' | python -m lgci.lex -
+  ' | python -m loosey.lex -
 IDENTIFIER val='int'
 IDENTIFIER val='main'
 PUNCTUATION val='('
@@ -136,7 +136,7 @@ sortslice_reverse(sortslice *s, Py_ssize_t n)
         reverse_slice(s->values, &s->values[n]);
 }
 
-$ ack -B1 -A5 ^sortslice_reverse ~/repos/cpython/Objects/listobject.c | python -m lgci.lex -
+$ ack -B1 -A5 ^sortslice_reverse ~/repos/cpython/Objects/listobject.c | python -m loosey.lex -
 IDENTIFIER val='static'
 IDENTIFIER val='void'
 IDENTIFIER val='sortslice_reverse'
