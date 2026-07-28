@@ -53,132 +53,148 @@ doctests.
 Imagine doctests for your C code.
 
 
-## The Lexer
+## Installation
 
-The lexer produces not just token sequences, but "token trees", where certain
-tokens may have children:
 ```
-// Matching parens/brackets/curlies:
-(...)
-[...]
-{...}
-
-// From a directive (e.g. #define) to the end of the line:
-#define NAME ...
-
-// Of course, in C the "end of the line" can be deferred with a backslash:
-#define NAME ... \
-    ... \
-    ...
+pip install loosey-goosey-c
 ```
 
-For example, here is a tree with a directive at the root (DEFMACRO), and
-some parenthesized child nodes (`PUNCTUATION val='('`), with children of
-their own:
-```
-$ echo "#define ADD(X, Y) (X + Y)" | python -m loosey.lex -
-DEFMACRO val='ADD'
-  PUNCTUATION val='('
-    IDENTIFIER val='X'
-    PUNCTUATION val=','
-    IDENTIFIER val='Y'
-  PUNCTUATION val='('
-    IDENTIFIER val='X'
-    PUNCTUATION val='+'
-    IDENTIFIER val='Y'
-```
 
-It's also possible for directive nodes to live under other nodes.
-Here is an example where some directives (DEFINE, UNDEF) live inside some
-curly braces (`PUNCTUATION val='{'`):
-```
-$ echo '
-  int main(argc, argv) {
-  #define VALUE 3
-      return VALUE
-  #undef VALUE
-  }
-  ' | python -m loosey.lex -
-IDENTIFIER val='int'
-IDENTIFIER val='main'
-PUNCTUATION val='('
-  IDENTIFIER val='argc'
-  PUNCTUATION val=','
-  IDENTIFIER val='argv'
-PUNCTUATION val='{'
-  DEFINE val='VALUE'
-    DEC_INT val='3'
-  IDENTIFIER val='return'
-  IDENTIFIER val='VALUE'
-  UNDEF val='VALUE'
-```
+## The C preprocessor
 
-Why use "token trees"?.. because I had an intuition that it would make some
-things easier later on!.. perhaps that will turn out to be incorrect, however.
-In any case, it certainly causes certain aspects of the preprocessor's
-behaviour to be incorrect; e.g. according to the C standard, in
-`SOME_MACRO([1, 2])`, there are two parameters being passed: the token
-sequences `[1` and `2]`.
-However, our implementation of the preprocessor considers that to be a
-single parameter being passed: the token tree `[1, 2]`.
-
-In any case, it makes the lexer's (and preprocessor's) output easier to
-eyeball.
-Looking at a more complicated example, here's a function from CPython's list
-implementation:
+At the moment, we just have a functioning preprocessor lexer.
+Here it is in action:
 ```
-$ ack -B1 -A5 ^sortslice_reverse ~/repos/cpython/Objects/listobject.c
-static void
-sortslice_reverse(sortslice *s, Py_ssize_t n)
+$ ack -B1 -A5 "^sortslice_copy\(" ~/repos/cpython/Objects/listobject.c 
+Py_LOCAL_INLINE(void)
+sortslice_copy(sortslice *s1, Py_ssize_t i, sortslice *s2, Py_ssize_t j)
 {
-    reverse_slice(s->keys, &s->keys[n]);
-    if (s->values != NULL)
-        reverse_slice(s->values, &s->values[n]);
+    s1->keys[i] = s2->keys[j];
+    if (s1->values != NULL)
+        s1->values[i] = s2->values[j];
 }
 
-$ ack -B1 -A5 ^sortslice_reverse ~/repos/cpython/Objects/listobject.c | python -m loosey.lex -
-IDENTIFIER val='static'
-IDENTIFIER val='void'
-IDENTIFIER val='sortslice_reverse'
-PUNCTUATION val='('
-  IDENTIFIER val='sortslice'
-  PUNCTUATION val='*'
-  IDENTIFIER val='s'
-  PUNCTUATION val=','
-  IDENTIFIER val='Py_ssize_t'
-  IDENTIFIER val='n'
-PUNCTUATION val='{'
-  IDENTIFIER val='reverse_slice'
-  PUNCTUATION val='('
-    IDENTIFIER val='s'
-    PUNCTUATION val='->'
-    IDENTIFIER val='keys'
-    PUNCTUATION val=','
-    PUNCTUATION val='&'
-    IDENTIFIER val='s'
-    PUNCTUATION val='->'
-    IDENTIFIER val='keys'
-    PUNCTUATION val='['
-      IDENTIFIER val='n'
-  PUNCTUATION val=';'
-  IDENTIFIER val='if'
-  PUNCTUATION val='('
-    IDENTIFIER val='s'
-    PUNCTUATION val='->'
-    IDENTIFIER val='values'
-    PUNCTUATION val='!='
-    IDENTIFIER val='NULL'
-  IDENTIFIER val='reverse_slice'
-  PUNCTUATION val='('
-    IDENTIFIER val='s'
-    PUNCTUATION val='->'
-    IDENTIFIER val='values'
-    PUNCTUATION val=','
-    PUNCTUATION val='&'
-    IDENTIFIER val='s'
-    PUNCTUATION val='->'
-    IDENTIFIER val='values'
-    PUNCTUATION val='['
-      IDENTIFIER val='n'
-  PUNCTUATION val=';'
+$ ack -B1 -A5 "^sortslice_copy\(" ~/repos/cpython/Objects/listobject.c | python -m loosey.pplex -
+1:1: IDENTIFIER('Py_LOCAL_INLINE')
+1:16: PUNCTUATION('(')
+1:17: IDENTIFIER('void')
+1:21: PUNCTUATION(')')
+2:1: IDENTIFIER('sortslice_copy')
+2:15: PUNCTUATION('(')
+2:16: IDENTIFIER('sortslice')
+2:26: PUNCTUATION('*')
+2:27: IDENTIFIER('s1')
+2:29: PUNCTUATION(',')
+2:31: IDENTIFIER('Py_ssize_t')
+2:42: IDENTIFIER('i')
+2:43: PUNCTUATION(',')
+2:45: IDENTIFIER('sortslice')
+2:55: PUNCTUATION('*')
+2:56: IDENTIFIER('s2')
+2:58: PUNCTUATION(',')
+2:60: IDENTIFIER('Py_ssize_t')
+2:71: IDENTIFIER('j')
+2:72: PUNCTUATION(')')
+3:1: PUNCTUATION('{')
+4:5: IDENTIFIER('s1')
+4:7: PUNCTUATION('->')
+4:9: IDENTIFIER('keys')
+4:13: PUNCTUATION('[')
+4:14: IDENTIFIER('i')
+4:15: PUNCTUATION(']')
+4:17: PUNCTUATION('=')
+4:19: IDENTIFIER('s2')
+4:21: PUNCTUATION('->')
+4:23: IDENTIFIER('keys')
+4:27: PUNCTUATION('[')
+4:28: IDENTIFIER('j')
+4:29: PUNCTUATION(']')
+4:30: PUNCTUATION(';')
+5:5: IDENTIFIER('if')
+5:8: PUNCTUATION('(')
+5:9: IDENTIFIER('s1')
+5:11: PUNCTUATION('->')
+5:13: IDENTIFIER('values')
+5:20: PUNCTUATION('!=')
+5:23: IDENTIFIER('NULL')
+5:27: PUNCTUATION(')')
+6:9: IDENTIFIER('s1')
+6:11: PUNCTUATION('->')
+6:13: IDENTIFIER('values')
+6:19: PUNCTUATION('[')
+6:20: IDENTIFIER('i')
+6:21: PUNCTUATION(']')
+6:23: PUNCTUATION('=')
+6:25: IDENTIFIER('s2')
+6:27: PUNCTUATION('->')
+6:29: IDENTIFIER('values')
+6:35: PUNCTUATION('[')
+6:36: IDENTIFIER('j')
+6:37: PUNCTUATION(']')
+6:38: PUNCTUATION(';')
+7:1: PUNCTUATION('}')
+```
+
+For fun, you can output the tokens on separate lines, but at their correct
+horizontal positions...
+```
+$ ack -B1 -A5 "^sortslice_copy\(" ~/repos/cpython/Objects/listobject.c | python -m loosey.pplex --tree -
+Py_LOCAL_INLINE
+               (
+                void
+                    )
+sortslice_copy
+              (
+               sortslice
+                         *
+                          s1
+                            ,
+                              Py_ssize_t
+                                         i
+                                          ,
+                                            sortslice
+                                                      *
+                                                       s2
+                                                         ,
+                                                           Py_ssize_t
+                                                                      j
+                                                                       )
+{
+    s1
+      ->
+        keys
+            [
+             i
+              ]
+                =
+                  s2
+                    ->
+                      keys
+                          [
+                           j
+                            ]
+                             ;
+    if
+       (
+        s1
+          ->
+            values
+                   !=
+                      NULL
+                          )
+        s1
+          ->
+            values
+                  [
+                   i
+                    ]
+                      =
+                        s2
+                          ->
+                            values
+                                  [
+                                   j
+                                    ]
+                                     ;
+}
 ```
