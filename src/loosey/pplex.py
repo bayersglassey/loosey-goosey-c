@@ -24,8 +24,22 @@
 
 import re
 import sys
-from argparse import ArgumentParser
 from typing import NamedTuple, Iterable, Iterator, Optional
+
+
+def to_string_literal(s: str) -> str:
+    """Produce a C string literal (i.e. for use as Token.value) from a
+    Python string"""
+    # HACK: json.dumps is prooooobably good enough
+    import json
+    return json.dumps(s)
+
+
+def from_string_literal(value: str) -> str:
+    """Produce a Python string from a C string literal"""
+    # HACK: json.loads is prooooobably good enough
+    import json
+    return json.loads(value)
 
 
 class SourceLine(NamedTuple):
@@ -43,6 +57,17 @@ class Token(NamedTuple):
     # expansion, etc
     parents: tuple['Token', ...] = ()
 
+    @staticmethod
+    def from_parents(parents, toktype: str, value: str) -> 'Token':
+        first_parent = parents[0]
+        return Token(
+            toktype=toktype,
+            line=first_parent.line,
+            col=first_parent.col,
+            value=value,
+            parents=parents,
+        )
+
     @property
     def filename(self) -> str:
         return self.line.filename
@@ -50,6 +75,11 @@ class Token(NamedTuple):
     @property
     def row(self) -> str:
         return self.line.row
+
+    def identifier(self) -> Optional[str]:
+        if self.toktype == 'IDENTIFIER':
+            return self.value
+        return None
 
     def location(self) -> str:
         return f'{self.filename}:{self.row}:{self.col}'
@@ -77,6 +107,42 @@ class ParseError(Exception):
         location = 'unknown' if token is None else token.location()
         Exception.__init__(self, f"{location}: {msg}")
         self.token = token
+
+
+KEYWORDS = frozenset((
+    'auto',
+    'break',
+    'case',
+    'char',
+    'const',
+    'continue',
+    'default',
+    'do',
+    'double',
+    'else',
+    'enum',
+    'extern',
+    'float',
+    'for',
+    'goto',
+    'if',
+    'int',
+    'long',
+    'register',
+    'return',
+    'short',
+    'signed',
+    'sizeof',
+    'static',
+    'struct',
+    'switch',
+    'typedef',
+    'union',
+    'unsigned',
+    'void',
+    'volatile',
+    'while',
+))
 
 
 # NOTE: the order matters, e.g. '++' must come before '+'
@@ -140,7 +206,7 @@ TOKEN_PATTERNS = {
 
     # The #include directive is the only place where a string lives inside
     # of "pointy brackets", so it's a special case for the tokenizer
-    'INCLUDE'     : r'#[ \t]*include[ \t]*(?:"[^"]*"|<[^>]*>)',
+    'INCLUDE'     : r'#[ \t]*include[ \t]*(?:"([^"]*)"|<([^>]*)>)',
 
     # The preprocessor operators are '#' and '##'.
     # NOTE: the '#' operator might be part of a directive (e.g. #define, #if)
@@ -174,6 +240,9 @@ TOKEN_PATTERNS = {
     'PUNCTUATION' : '|'.join(map(re.escape, PUNCTUATION)),
     'BADCHAR'     : r'.',
 }
+
+# A regex which matches #include directives
+INCLUDE_REGEX = re.compile(TOKEN_PATTERNS['INCLUDE'])
 
 # Using one giant regex with .finditer() instead of doing .match() ourselves
 # with multiple small ones: this approach hopefully lets us execute less slow
@@ -254,7 +323,7 @@ class Lexer:
         ...     for token in line: token.pprint()
         === LINE 1:
         === LINE 2:
-        <fakefile>:2:5: INCLUDE('<stdio.h>')
+        <fakefile>:2:5: INCLUDE('#include <stdio.h>')
         === LINE 3:
         <fakefile>:3:5: PP_OPERATOR('#')
         <fakefile>:3:6: IDENTIFIER('define')
@@ -456,26 +525,3 @@ def tokenize_file(filename: str) -> Iterator[list[Token]]:
     finally:
         if should_close:
             file.close()
-
-
-def main():
-    parser = ArgumentParser()
-    parser.add_argument('filename')
-    parser.add_argument('-t', '--tree', action='store_true')
-    args = parser.parse_args()
-    filename = args.filename
-    try:
-        for row, line in enumerate(tokenize_file(filename), 1):
-            for token in line:
-                if args.tree:
-                    print(' ' * (token.col - 1) + token.value)
-                else:
-                    print(f"{token.row}:{token.col}: {token.prettystring()}")
-    except BrokenPipeError:
-        # So we can pipe ourselves into "less" and quit before lexing the
-        # whole file, etc
-        pass
-
-
-if __name__ == '__main__':
-    main()
