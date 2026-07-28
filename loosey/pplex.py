@@ -468,7 +468,7 @@ def main():
         for row, line in enumerate(tokenize_file(filename), 1):
             for token in line:
                 if args.tree:
-                    print(' ' * token.col + token.value)
+                    print(' ' * (token.col - 1) + token.value)
                 else:
                     print(f"{token.row}:{token.col}: {token.prettystring()}")
     except BrokenPipeError:
