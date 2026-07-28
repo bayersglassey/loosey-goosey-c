@@ -4,3 +4,6 @@ venv/
 html/
 scratch.py
 .coverage
+*.egg-info
+dist/
+build/
