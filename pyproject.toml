@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loosey-goosey-c"
+version = "0.0.0"
+description = "Loosey goosey C parser and interpreter"
+readme = "README.md"
+authors = [
+    { name = "Ben Ayers-Glassey", email = "bayersglassey@gmail.com" },
+]
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.12"
+dependencies = [
+]
+
+[project.urls]
+Homepage = "https://github.com/bayersglassey/loosey-goosey-c"

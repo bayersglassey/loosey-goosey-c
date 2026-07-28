@@ -59,6 +59,9 @@ Imagine doctests for your C code.
 pip install loosey-goosey-c
 ```
 
+See also:
+* https://pypi.org/project/loosey-goosey-c
+
 
 ## The C preprocessor
 

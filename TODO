@@ -1,5 +1,5 @@
 
-[ ] Grab "loosey-goosey-c" and "loosey" on pypi
+[X] Grab "loosey-goosey-c" and "loosey" on pypi
 
 [ ] Probably do the preprocessor as a separate step?..
     Errr but we would like to be able to do stuff at a REPL, so we want to
