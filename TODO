@@ -1,4 +1,6 @@
 
+[ ] Grab "loosey-goosey-c" and "loosey" on pypi
+
 [ ] Probably do the preprocessor as a separate step?..
     Errr but we would like to be able to do stuff at a REPL, so we want to
     be able to dynamically #define and #undef.
@@ -20,3 +22,23 @@
 
     [ ] Replace my terminology, "definitions" and "macros", with the official
         terminology, "macros" and "function-like macros"
+
+
+OKAY, about the preprocessor.
+It uses different tokens than C itself.
+In particular, see "preprocessing numbers":
+https://gcc.gnu.org/onlinedocs/cpp/Tokenization.html
+
+    A preprocessing number has a rather bizarre definition. The category
+    includes all the normal integer and floating point constants one
+    expects of C, but also a number of other things one might not
+    initially recognize as a number.
+    Formally, preprocessing numbers begin with an optional period, a
+    required decimal digit, and then continue with any sequence of
+    letters, digits, underscores, periods, and exponents.
+    ...etc...
+
+So, forget about token types and stuff, let's just track token's location
+and value.
+And let's focus on making the preprocessor's behaviour easy to see, because
+that's our whole purpose here -- making C easier to understand!
