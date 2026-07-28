@@ -3,6 +3,7 @@
     This module's regexes are based on an ANSI C grammar in Lex format which I
     found on the Internet:
     https://www.lysator.liu.se/c/ANSI-C-grammar-l.html
+    (Which I've copied into this repo, see: notes/ansi.c.grammar.l)
 
         In 1985, Jeff Lee published this Lex specification together with a Yacc
         grammar for the April 30, 1985 ANSI C draft.
@@ -15,42 +16,66 @@
         Jutta Degener, 1995
 
     ...thanks, Jutta! :)
-    - BAG, 2026
+
+    I also used the GNU C preprocessor's excellent documentation:
+    https://gcc.gnu.org/onlinedocs/cpp/Tokenization.html
 
 """
 
 import re
 import sys
+from argparse import ArgumentParser
 from typing import NamedTuple, Iterable, Iterator, Optional
+
+
+class SourceLine(NamedTuple):
+    filename: str
+    row: int = 1
 
 
 class Token(NamedTuple):
     toktype: str
-    filename: str
-    row: int = 1
+    line: SourceLine
     col: int = 1
     value: str = ''
 
-    # Used e.g. when "pasting" tokens together
+    # Used e.g. when pasting tokens together with '##', or doing macro
+    # expansion, etc
     parents: tuple['Token', ...] = ()
 
-    def location(self, with_parents: bool = False) -> str:
-        msg = f'{self.filename}:{self.row}:{self.col}'
-        if with_parents and self.parents:
-            msg += f" (from: {', '.join(parent.location() for parent in self.parents)})"
-        return msg
+    @property
+    def filename(self) -> str:
+        return self.line.filename
+
+    @property
+    def row(self) -> str:
+        return self.line.row
+
+    def location(self) -> str:
+        return f'{self.filename}:{self.row}:{self.col}'
 
     def prettystring(self) -> str:
         return f"{self.toktype}({self.value!r})"
 
-    def pprint(self, *, file=None):
-        print(f"{self.location()}: {self.prettystring()}", file=file)
+    def pprint(self, *, indent='', with_location: bool = True, with_parents: bool = False):
+        msg = self.prettystring()
+        if with_location:
+            msg = f'{self.location()}: {msg}'
+        print(indent + msg)
+        if with_parents and self.parents:
+            print(f"{indent} ...from:")
+            for parent in self.parents:
+                parent.pprint(indent=indent + '  ', with_parents=True)
 
 
 class ParseError(Exception):
 
-    def __init__(self, token: Token, msg):
-        Exception.__init__(self, f"{token.location()}: {msg}")
+    def __init__(self, token: Optional[Token], msg):
+        # NOTE: we almost never want to have token be None.
+        # The one case I know we need to support is when we're trying to
+        # tokenize a file which consists of a single backslash. O_o
+        location = 'unknown' if token is None else token.location()
+        Exception.__init__(self, f"{location}: {msg}")
         self.token = token
 
 
@@ -107,33 +132,17 @@ PUNCTUATION = (
 )
 
 
-# Regex patterns used to parse tokens.
-# See:
-# * https://gcc.gnu.org/onlinedocs/cpp/Tokenization.html
-# * notes/ansi.c.grammar.l
-# NOTE: we only use these regex patterns on *lines* of code, so you won't
-# see any mention of \n in here.
-# NOTE: a pattern may include a named capture group called 'VALUE'.
-# If such a group is present, then its captured value is used for Token.value,
-# instead of Token.value being the entire token.
+# Regex patterns used to parse tokens from a single line of C code.
+# We guarantee that any newlines or backslash+newline pairs have already
+# been stripped from the lines we use these patterns with.
 TOKEN_PATTERNS = {
     'WHITESPACE'  : r'[ \t]+',
 
     # The #include directive is the only place where a string lives inside
     # of "pointy brackets", so it's a special case for the tokenizer
-    'INCLUDE'     : r'#[ \t]*include[ \t]*(?P<VALUE>"[^"]*"|<[^>]*>)',
+    'INCLUDE'     : r'#[ \t]*include[ \t]*(?:"[^"]*"|<[^>]*>)',
 
-    # When defining a function-like macro, there must be no space between
-    # the macro name and the opening parenthesis, so it's a special case
-    # for the tokenizer
-    'FUNC_DEFINE' : r'#[ \t]*define[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)(?=\()',
-
-    # It's handy for macro definitions to correspond to a single token,
-    # whose .value is the macro name!.. so this is a special case of the
-    # tokenizer
-    'DEFINE' : r'#[ \t]*define[ \t]*(?P<VALUE>[a-zA-Z_][0-9a-zA-Z_]*)',
-
-    # The preprocessor operators are '#' or '##'.
+    # The preprocessor operators are '#' and '##'.
     # NOTE: the '#' operator might be part of a directive (e.g. #define, #if)
     # or it might be the "stringize" operator, depending on whether we are
     # currently expanding a macro body or not.
@@ -163,7 +172,7 @@ TOKEN_PATTERNS = {
 
     'IDENTIFIER'  : r'[a-zA-Z_][0-9a-zA-Z_]*',
     'PUNCTUATION' : '|'.join(map(re.escape, PUNCTUATION)),
-    'BADCHAR'     : '.',
+    'BADCHAR'     : r'.',
 }
 
 # Using one giant regex with .finditer() instead of doing .match() ourselves
@@ -172,74 +181,84 @@ TOKEN_PATTERNS = {
 # Python strings, since AFAIK there's no way to pass a start location to
 # .match().
 TOKEN_REGEX = re.compile('|'.join(
-    # Named capture groups must be uniquely named, so here we turn e.g.
-    # 'VALUE' into f'{toktype}_VALUE'.
-    f'(?P<{toktype}>' + pattern.replace('?P<', f'?P<{toktype}_') + ')'
+    f'(?P<{toktype}>{pattern})'
     for toktype, pattern in TOKEN_PATTERNS.items()))
 
 
 class Lexer:
-    r"""Consumes lines of C code, yielding a stream of tokens.
+    r"""Turns lines of C code into lists of tokens.
 
-        >>> for token in Lexer().tokenize(r'''
+        >>> for i, line in enumerate(Lexer().tokenize(r'''
         ...     int main() {
         ...         printf("Hello \"world\"!");
         ...     }
-        ... '''): token.pprint()
-        <fakefile>:1:1: EOL('')
+        ... ''')):
+        ...     print(f"=== LINE {i + 1}:")
+        ...     for token in line: token.pprint()
+        === LINE 1:
+        === LINE 2:
         <fakefile>:2:5: IDENTIFIER('int')
         <fakefile>:2:9: IDENTIFIER('main')
         <fakefile>:2:13: PUNCTUATION('(')
         <fakefile>:2:14: PUNCTUATION(')')
         <fakefile>:2:16: PUNCTUATION('{')
-        <fakefile>:2:17: EOL('')
+        === LINE 3:
         <fakefile>:3:9: IDENTIFIER('printf')
         <fakefile>:3:15: PUNCTUATION('(')
         <fakefile>:3:16: STRING('"Hello \\"world\\"!"')
         <fakefile>:3:34: PUNCTUATION(')')
         <fakefile>:3:35: PUNCTUATION(';')
-        <fakefile>:3:36: EOL('')
+        === LINE 4:
         <fakefile>:4:5: PUNCTUATION('}')
-        <fakefile>:4:6: EOL('')
 
         Lines separated by pairs (backslash, newline) are "pasted" together
-        into a single line, i.e. an EOL token isn't emitted between them:
-        >>> for token in Lexer().tokenize(r'''
+        into a single line:
+        >>> for i, line in enumerate(Lexer().tokenize(r'''
         ...     line 1 \
         ...     line 2
-        ... '''): token.pprint()
-        <fakefile>:1:1: EOL('')
+        ... ''')):
+        ...     print(f"=== LINE {i + 1}:")
+        ...     for token in line: token.pprint()
+        === LINE 1:
+        === LINE 2:
         <fakefile>:2:5: IDENTIFIER('line')
         <fakefile>:2:10: NUMBER('1')
         <fakefile>:3:5: IDENTIFIER('line')
         <fakefile>:3:10: NUMBER('2')
-        <fakefile>:3:11: EOL('')
 
         Multiline comments are handled:
-        >>> for token in Lexer().tokenize(r'''
+        >>> for i, line in enumerate(Lexer().tokenize(r'''
         ...     x /* some comment */ y /* more
-        ...     and more\
-        ...     comment */ z /* trailing off...
-        ...     oh no...
-        ... '''): token.pprint()
-        <fakefile>:1:1: EOL('')
+        ...     and more
+        ...     comment */ z
+        ... ''')):
+        ...     print(f"=== LINE {i + 1}:")
+        ...     for token in line: token.pprint()
+        === LINE 1:
+        === LINE 2:
         <fakefile>:2:5: IDENTIFIER('x')
         <fakefile>:2:7: COMMENT('/* some comment */')
         <fakefile>:2:26: IDENTIFIER('y')
-        <fakefile>:2:28: COMMENT('/* more\n    and more\n    comment */')
+        <fakefile>:2:28: COMMENT('/* more')
+        <fakefile>:3:1: COMMENT('    and more')
+        <fakefile>:4:1: COMMENT('    comment */')
         <fakefile>:4:16: IDENTIFIER('z')
-        <fakefile>:4:18: COMMENT('/* trailing off...\n    oh no...')
 
         Preprocessor directives are handled:
-        >>> for token in Lexer().tokenize(r'''
+        >>> for i, line in enumerate(Lexer().tokenize(r'''
         ...     #include <stdio.h>
         ...     #define PASTE(X, Y) X ## Y
         ...     #define SIZE 64
-        ... '''): token.pprint()
-        <fakefile>:1:1: EOL('')
+        ... ''')):
+        ...     print(f"=== LINE {i + 1}:")
+        ...     for token in line: token.pprint()
+        === LINE 1:
+        === LINE 2:
         <fakefile>:2:5: INCLUDE('<stdio.h>')
-        <fakefile>:2:23: EOL('')
-        <fakefile>:3:5: FUNC_DEFINE('PASTE')
+        === LINE 3:
+        <fakefile>:3:5: PP_OPERATOR('#')
+        <fakefile>:3:6: IDENTIFIER('define')
+        <fakefile>:3:13: IDENTIFIER('PASTE')
         <fakefile>:3:18: PUNCTUATION('(')
         <fakefile>:3:19: IDENTIFIER('X')
         <fakefile>:3:20: PUNCTUATION(',')
@@ -248,10 +267,11 @@ class Lexer:
         <fakefile>:3:25: IDENTIFIER('X')
         <fakefile>:3:27: PP_OPERATOR('##')
         <fakefile>:3:30: IDENTIFIER('Y')
-        <fakefile>:3:31: EOL('')
-        <fakefile>:4:5: DEFINE('SIZE')
+        === LINE 4:
+        <fakefile>:4:5: PP_OPERATOR('#')
+        <fakefile>:4:6: IDENTIFIER('define')
+        <fakefile>:4:13: IDENTIFIER('SIZE')
         <fakefile>:4:18: NUMBER('64')
-        <fakefile>:4:20: EOL('')
 
     Possible errors:
 
@@ -260,15 +280,33 @@ class Lexer:
          ...
         loosey.pplex.ParseError: <fakefile>:1:9: Unexpected character: '"'
 
+        >>> list(Lexer().tokenize('1 2 /* comment '))
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:5: Expected another line
+
     """
 
     def __init__(self, filename: str = '<fakefile>'):
         self.filename = filename
         self.row = 1
-        self.block_comment_token: Optional[Token] = None
 
-    def tokenize(self, lines: str | Iterable[str]) -> Iterator[Token]:
-        """Yield a stream of tokens from the given lines of C code.
+        # Did previous line have an unterminated "/*"?..
+        self.in_multiline_comment = False
+
+        # Used when previous line ended with a backslash and/or unterminated
+        # multiline comment
+        self.tokens_from_prev_line: Optional[list[Token]] = None
+
+    def reset_line(self):
+        """Forgets everything about the previous line.
+        For use e.g. if there is a syntax error during a multiline macro
+        definition"""
+        self.in_multiline_comment = False
+        self.tokens_from_prev_line = None
+
+    def tokenize(self, lines: Iterable[str] | str) -> Iterator[list[Token]]:
+        """Turns lines of C code into lists of tokens.
         The lines of code should be finite, and their end will be treated as
         an end-of-file."""
 
@@ -277,104 +315,135 @@ class Lexer:
             lines = lines.splitlines()
 
         for line in lines:
-            yield from self.tokenize_line(line)
+            tokenized_line = self.tokenize_line(line)
+            if tokenized_line is None:
+                # We didn't get a line yet, e.g. because a multiline comment
+                # hasn't ended yet, and/or there was a backslash at the end
+                # of the line
+                pass
+            else:
+                yield tokenized_line
+        self.finish()
 
-        yield from self.finish()
-
-    def finish(self) -> Iterator[Token]:
+    def finish(self):
         """To be called after a finite stream of lines has been processed,
         e.g. at the end of a file"""
-
-        # If a block comment is unterminated, that's fine, just make sure we
-        # remember to emit it!
-        if self.block_comment_token is not None:
-            yield self.block_comment_token
-            self.block_comment_token = None
-
-    def tokenize_line(self, line: str) -> Iterator[Token]:
-        """Yield a stream of tokens from a single line of C code"""
-
-        # Strip newlines from the end so we can iterate directly over the
-        # output of open()
-        line = line.rstrip('\n')
-
-        # Paste together lines joined with backslash + newline.
-        # Actually, we don't really bother pasting the lines together, because
-        # that behaviour is crazy!.. e.g. you can have a token which starts on
-        # on one line, and ends on another.
-        # Instead, if a line ends with a backslash, we just chop that off, and
-        # remember not to emit an EOL token.
-        pasted = line.endswith('\\')
-        if pasted:
-            line = line[:-1]
-
-        # If we're in the middle of a block comment (started on a previous
-        # line), figure out if it ends on this line, etc
-        block_comment_chopped = 0
-        if self.block_comment_token is not None:
-            end_index = line.find('*/')
-            if end_index < 0:
-                # The block comment continues for this entire line!
-                self.block_comment_token = self.block_comment_token._replace(
-                    value=self.block_comment_token.value + '\n' + line)
-                self.row += 1
-                return
+        if self.tokens_from_prev_line is not None:
+            if self.tokens_from_prev_line:
+                last_token = self.tokens_from_prev_line[-1]
             else:
-                # The block comment ends in this line, so chop it off,
-                # then process all remaining tokens in the line
-                end_index += 2 # go past the '*/'
-                self.block_comment_token = self.block_comment_token._replace(
-                    value=self.block_comment_token.value + '\n' + line[:end_index])
-                yield self.block_comment_token
-                line = line[end_index:]
-                block_comment_chopped = end_index
-                self.block_comment_token = None
+                # E.g. if we were trying to tokenize a file consisting of
+                # just a backslash, with no tokens O_o
+                last_token = None
+            raise ParseError(last_token, "Expected another line")
 
-        # Parse tokens from this line
-        for match in TOKEN_REGEX.finditer(line):
-            groups = match.groupdict()
-            toktype = next(toktype for toktype in TOKEN_PATTERNS
-                if groups[toktype] is not None)
-            if toktype == 'WHITESPACE':
-                continue
+    def tokenize_line(self, line: str) -> Optional[list[Token]]:
+        """Turns a line of C code into a list of tokens... or into None, if
+        the line ends in a backslash or unterminated block comment.
+        (In the latter case, this line's tokens will be saved, and prepended
+        to the list of tokens generated for the next line)"""
+        try:
+            # Strip newlines from the end so we can iterate directly over the
+            # output of open()
+            line = line.rstrip('\n')
 
-            # For most tokens, this is just the entire token.
-            # For some directives, e.g. #define, this is an identifier.
-            # For #include, this is a filename.
-            # For other directives, this is the directive name, e.g. for
-            # #if, value will be 'pragma'.
-            value = groups.get(f'{toktype}_VALUE') or match.group()
+            # Grab the tokens left over from previous line, if any.
+            if self.tokens_from_prev_line is not None:
+                tokens = self.tokens_from_prev_line
+                self.tokens_from_prev_line = None
+            else:
+                tokens = []
 
-            token = Token(
-                toktype=toktype,
+            # Check for backslash at end of line
+            line_ended_with_backslash = line.endswith('\\')
+            if line_ended_with_backslash:
+                line = line[:-1]
+
+            # Reused by all Token instances generated for this line
+            source_line = SourceLine(
                 filename=self.filename,
                 row=self.row,
-                col=1 + block_comment_chopped + match.start(),
-                value=value,
             )
 
-            if toktype == 'BADCHAR':
-                raise ParseError(token, f"Unexpected character: {value!r}")
+            # If we're in the middle of a multiline comment (started on a
+            # previous line), figure out if it ends on this line, etc
+            block_comment_chopped = 0
+            if self.in_multiline_comment:
+                comment_token = tokens[-1]
+                end_index = line.find('*/')
+                if end_index < 0:
+                    # The comment continues for this entire line!
+                    # We emit separate tokens for the parts of a multiline
+                    # comment which come from different lines, for no
+                    # particular reason.
+                    tokens.append(Token(
+                        toktype='COMMENT',
+                        line=source_line,
+                        value=line,
+                    ))
+                    self.row += 1
+                    self.tokens_from_prev_line = tokens
+                    return
+                else:
+                    # The comment ends in this line, so chop it off and
+                    # process the rest of the line
+                    end_index += 2 # go past the '*/'
+                    # We emit separate tokens for the parts of a multiline
+                    # comment which come from different lines, for no
+                    # particular reason.
+                    tokens.append(Token(
+                        toktype='COMMENT',
+                        line=source_line,
+                        value=line[:end_index],
+                    ))
+                    line = line[end_index:]
+                    block_comment_chopped = end_index
+                    self.in_multiline_comment = False
 
-            if value.startswith('/*') and not value.endswith('*/'):
-                # We've found a block comment which doesn't end on this line!..
-                self.block_comment_token = token
+            # Parse tokens from this line
+            for match in TOKEN_REGEX.finditer(line):
+                groups = match.groupdict()
+                toktype = next(toktype for toktype in TOKEN_PATTERNS
+                    if groups[toktype] is not None)
+                if toktype == 'WHITESPACE':
+                    continue
+
+                value = match.group()
+
+                token = Token(
+                    toktype=toktype,
+                    line=source_line,
+                    col=1 + block_comment_chopped + match.start(),
+                    value=value,
+                )
+
+                if toktype == 'BADCHAR':
+                    raise ParseError(token, f"Unexpected character: {value!r}")
+
+                if value.startswith('/*') and not value.endswith('*/'):
+                    # We've found a block comment which doesn't end on this
+                    # line!..
+                    self.in_multiline_comment = True
+
+                tokens.append(token)
+
+            self.row += 1
+
+            # Now we either return our list of tokens, or we save them for
+            # the next line...
+            if line_ended_with_backslash or self.in_multiline_comment:
+                self.tokens_from_prev_line = tokens
+                return None
             else:
-                yield token
+                return tokens
 
-        # Maybe emit an EOL token?..
-        if not pasted and self.block_comment_token is None:
-            yield Token(
-                toktype='EOL',
-                filename=self.filename,
-                row=self.row,
-                col=1 + block_comment_chopped + len(line),
-            )
-
-        self.row += 1
+        except Exception:
+            # If we were continuing a previous line, forget about that now
+            self.reset_line()
+            raise
 
 
-def tokenize_file(filename: str) -> Iterator[Token]:
+def tokenize_file(filename: str) -> Iterator[list[Token]]:
     if filename == '-':
         filename = '<stdin>'
         file = sys.stdin
@@ -390,10 +459,18 @@ def tokenize_file(filename: str) -> Iterator[Token]:
 
 
 def main():
-    filename = sys.argv[1]
+    parser = ArgumentParser()
+    parser.add_argument('filename')
+    parser.add_argument('-t', '--tree', action='store_true')
+    args = parser.parse_args()
+    filename = args.filename
     try:
-        for token in tokenize_file(filename):
-            token.pprint()
+        for row, line in enumerate(tokenize_file(filename), 1):
+            for token in line:
+                if args.tree:
+                    print(' ' * token.col + token.value)
+                else:
+                    print(f"{token.row}:{token.col}: {token.prettystring()}")
     except BrokenPipeError:
         # So we can pipe ourselves into "less" and quit before lexing the
         # whole file, etc
