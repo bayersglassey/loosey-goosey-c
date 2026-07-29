@@ -42,9 +42,23 @@ def from_string_literal(value: str) -> str:
     return json.loads(value)
 
 
-class SourceLine(NamedTuple):
+class SourceFile(NamedTuple):
     filename: str
+
+    # If we were imported from another file
+    parent: Optional['SourceFile'] = None
+
+
+class SourceLine(NamedTuple):
+    file: SourceFile
     row: int = 1
+
+    @property
+    def filename(self) -> str:
+        return self.file.filename
+
+
+TokenParents = tuple['Token', ...]
 
 
 class Token(NamedTuple):
@@ -55,10 +69,20 @@ class Token(NamedTuple):
 
     # Used e.g. when pasting tokens together with '##', or doing macro
     # expansion, etc
-    parents: tuple['Token', ...] = ()
+    parents: TokenParents = ()
 
     @staticmethod
-    def from_parents(parents, toktype: str, value: str) -> 'Token':
+    def fake(toktype: str, value: str = '') -> 'Token':
+        """Generate a token with fake location info, for use e.g. in
+        doctests"""
+        return Token(
+            toktype=toktype,
+            value=value,
+            line=SourceLine(file=SourceFile('<fakefile>')),
+        )
+
+    @staticmethod
+    def from_parents(parents: TokenParents, toktype: str, value: str) -> 'Token':
         first_parent = parents[0]
         return Token(
             toktype=toktype,
@@ -67,6 +91,9 @@ class Token(NamedTuple):
             value=value,
             parents=parents,
         )
+
+    def copy_with_parents(self, parents: TokenParents) -> 'Token':
+        return self.from_parents(parents + (self,), self.toktype, self.value)
 
     @property
     def filename(self) -> str:
@@ -87,7 +114,14 @@ class Token(NamedTuple):
     def prettystring(self) -> str:
         return f"{self.toktype}({self.value!r})"
 
-    def pprint(self, *, indent='', with_location: bool = True, with_parents: bool = False):
+    def pprint(
+            self,
+            *,
+            indent='',
+            with_location: bool = True,
+            with_parents: bool = False,
+            with_file_parents: bool = False,
+            ):
         msg = self.prettystring()
         if with_location:
             msg = f'{self.location()}: {msg}'
@@ -96,6 +130,11 @@ class Token(NamedTuple):
             print(f"{indent} ...from:")
             for parent in self.parents:
                 parent.pprint(indent=indent + '  ', with_parents=True)
+        if with_file_parents:
+            file = self.line.file.parent
+            while file:
+                print(f"{indent} ...imported from: {file.filename}")
+                file = file.parent
 
 
 class ParseError(Exception):
@@ -358,8 +397,10 @@ class Lexer:
 
     """
 
-    def __init__(self, filename: str = '<fakefile>'):
-        self.filename = filename
+    def __init__(self, file: SourceFile | str = '<fakefile>'):
+        if isinstance(file, str):
+            file = SourceFile(filename=file)
+        self.file = file
         self.row = 1
 
         # Did previous line have an unterminated "/*"?..
@@ -432,8 +473,8 @@ class Lexer:
 
             # Reused by all Token instances generated for this line
             source_line = SourceLine(
-                filename=self.filename,
                 row=self.row,
+                file=self.file,
             )
 
             # If we're in the middle of a multiline comment (started on a

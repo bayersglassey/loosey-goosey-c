@@ -2,9 +2,10 @@
 
     This file implements the C preprocessor.
 
-    I used the following documentation as a rough guide:
+    I used the following documentation as a rough guide (mostly the GCC one):
     * https://gcc.gnu.org/onlinedocs/cpp/index.html
     * https://en.cppreference.com/c/preprocessor
+    * https://home.cs.colorado.edu/~main/cs1300/doc/gnu/cpp_toc.html
 
 """
 
@@ -29,7 +30,10 @@ class Macro(NamedTuple):
     name: str
     token: Token
     body: list[Token]
-    params: list[str] = None
+
+    # If None, this is an "object-like macro".
+    # If not None, this is a "function-like macro".
+    params: Optional[list[str]] = None
 
     @property
     def is_function_like(self) -> bool:
@@ -37,13 +41,32 @@ class Macro(NamedTuple):
         opposed to just `#define M`"""
         return self.params is not None
 
-    def pprint(self):
+    @property
+    def is_variadic(self) -> bool:
+        """Variadic macro, e.g. `#define M(X, Y, ...)`.
+        The param name is defined as '...' but is '__VA_ARGS__' in the body."""
+        return self.params is not None and self.params[-1] == '__VA_ARGS__'
+
+    def pprint(self, *, inline: bool = False):
         msg = f'#define {self.name}'
         if self.params is not None:
             msg += f"({', '.join(self.params)})"
-        print(msg)
-        for token in self.body:
-            token.pprint(indent='  ')
+        if inline:
+            print(f"{msg}: {' '.join(token.value for token in self.body)}")
+        else:
+            print(msg)
+            for token in self.body:
+                token.pprint(indent='  ')
+
+
+class MacroExpansionError(ParseError):
+    """For when an error happens while expanding a macro"""
+
+    def __init__(self, macro: Macro, token: Token, msg: str):
+        ParseError.__init__(self, token,
+            f"While expanding macro {macro.name} (defined at {macro.token.location()}): {msg}")
+        self.macro = macro
+        self.original_msg = msg
 
 
 class Preprocessor:
@@ -51,9 +74,14 @@ class Preprocessor:
     Processes pre-tokenized lines of C code into zero or more lines of tokens.
 
         >>> pp = Preprocessor()
+        >>> test_i = 0
+        >>> def process(text):
+        ...     global test_i
+        ...     test_i += 1
+        ...     return list(pp.process(Lexer(f'input-{test_i}').tokenize(text)))
 
         Most preprocessor directives don't have any output of their own:
-        >>> for line in pp.process(r'''
+        >>> for line in process(r'''
         ...     #define K 1024
         ...     #define SIZE 3 * K
         ...     #define DUMMY hello
@@ -62,59 +90,121 @@ class Preprocessor:
         ...         VAR = malloc(_SIZE);
         ...     #define NOTHING
         ...     # /* The "null directive"! */
+        ...     #define VV0(...) [__VA_ARGS__]
+        ...     #define VV1(X, ...) X[__VA_ARGS__]
         ... '''):
-        ...     for token in line: token.pprint(with_parents=True)
+        ...     for token in line: token.pprint()
 
         The macros are stored for use in subsequent processing:
         >>> for name, macro in pp.macros.items():
         ...     macro.pprint()
         #define K
-          <fakefile>:2:15: NUMBER('1024')
+          input-1:2:15: NUMBER('1024')
         #define SIZE
-          <fakefile>:3:18: NUMBER('3')
-          <fakefile>:3:20: PUNCTUATION('*')
-          <fakefile>:3:22: IDENTIFIER('K')
+          input-1:3:18: NUMBER('3')
+          input-1:3:20: PUNCTUATION('*')
+          input-1:3:22: IDENTIFIER('K')
         #define MALLOC(VAR, _SIZE)
-          <fakefile>:7:9: IDENTIFIER('VAR')
-          <fakefile>:7:13: PUNCTUATION('=')
-          <fakefile>:7:15: IDENTIFIER('malloc')
-          <fakefile>:7:21: PUNCTUATION('(')
-          <fakefile>:7:22: IDENTIFIER('_SIZE')
-          <fakefile>:7:27: PUNCTUATION(')')
-          <fakefile>:7:28: PUNCTUATION(';')
+          input-1:7:9: IDENTIFIER('VAR')
+          input-1:7:13: PUNCTUATION('=')
+          input-1:7:15: IDENTIFIER('malloc')
+          input-1:7:21: PUNCTUATION('(')
+          input-1:7:22: IDENTIFIER('_SIZE')
+          input-1:7:27: PUNCTUATION(')')
+          input-1:7:28: PUNCTUATION(';')
         #define NOTHING
+        #define VV0(...)
+          input-1:10:22: PUNCTUATION('[')
+          input-1:10:23: IDENTIFIER('__VA_ARGS__')
+          input-1:10:34: PUNCTUATION(']')
+        #define VV1(X, ...)
+          input-1:11:25: IDENTIFIER('X')
+          input-1:11:26: PUNCTUATION('[')
+          input-1:11:27: IDENTIFIER('__VA_ARGS__')
+          input-1:11:38: PUNCTUATION(']')
 
-        The definitions are expanded in the usual way:
-        >>> for line in pp.process(r'''
+        The definitions are expanded in the usual way.
+        Object-like macros take no parameters:
+        >>> for line in process(r'''
+        ...     size_t size = SIZE;
+        ... '''):
+        ...     for token in line: token.pprint()
+        input-2:2:5: IDENTIFIER('size_t')
+        input-2:2:12: IDENTIFIER('size')
+        input-2:2:17: PUNCTUATION('=')
+        input-2:2:19: NUMBER('3')
+        input-2:2:19: PUNCTUATION('*')
+        input-2:2:19: NUMBER('1024')
+        input-2:2:23: PUNCTUATION(';')
+
+        Tokens track their "parent" tokens, e.g. references to macros and
+        their parameters:
+        >>> for line in process(r'''
         ...     size_t size = SIZE;
         ... '''):
         ...     for token in line: token.pprint(with_parents=True)
-        <fakefile>:2:5: IDENTIFIER('size_t')
-        <fakefile>:2:12: IDENTIFIER('size')
-        <fakefile>:2:17: PUNCTUATION('=')
-        <fakefile>:3:18: NUMBER('3')
-        <fakefile>:3:20: PUNCTUATION('*')
-        <fakefile>:2:15: NUMBER('1024')
-        <fakefile>:2:23: PUNCTUATION(';')
+        input-3:2:5: IDENTIFIER('size_t')
+        input-3:2:12: IDENTIFIER('size')
+        input-3:2:17: PUNCTUATION('=')
+        input-3:2:19: NUMBER('3')
+         ...from:
+          input-3:2:19: IDENTIFIER('SIZE')
+          input-1:3:18: NUMBER('3')
+        input-3:2:19: PUNCTUATION('*')
+         ...from:
+          input-3:2:19: IDENTIFIER('SIZE')
+          input-1:3:20: PUNCTUATION('*')
+        input-3:2:19: NUMBER('1024')
+         ...from:
+          input-3:2:19: IDENTIFIER('SIZE')
+          input-1:3:22: NUMBER('1024')
+           ...from:
+            input-1:3:22: IDENTIFIER('K')
+            input-1:2:15: NUMBER('1024')
+        input-3:2:23: PUNCTUATION(';')
 
-        >>> for line in pp.process(r'''
+        Function-like macros are "called" with parameters:
+        >>> for line in process(r'''
         ...     char *msg;
         ...     MALLOC(msg, SIZE)
         ... '''):
-        ...     for token in line: token.pprint(with_parents=True)
-        <fakefile>:2:5: IDENTIFIER('char')
-        <fakefile>:2:10: PUNCTUATION('*')
-        <fakefile>:2:11: IDENTIFIER('msg')
-        <fakefile>:2:14: PUNCTUATION(';')
-        <fakefile>:3:12: IDENTIFIER('msg')
-        <fakefile>:7:13: PUNCTUATION('=')
-        <fakefile>:7:15: IDENTIFIER('malloc')
-        <fakefile>:7:21: PUNCTUATION('(')
-        <fakefile>:3:18: NUMBER('3')
-        <fakefile>:3:20: PUNCTUATION('*')
-        <fakefile>:2:15: NUMBER('1024')
-        <fakefile>:7:27: PUNCTUATION(')')
-        <fakefile>:7:28: PUNCTUATION(';')
+        ...     for token in line: token.pprint()
+        input-4:2:5: IDENTIFIER('char')
+        input-4:2:10: PUNCTUATION('*')
+        input-4:2:11: IDENTIFIER('msg')
+        input-4:2:14: PUNCTUATION(';')
+        input-4:3:5: IDENTIFIER('msg')
+        input-4:3:5: PUNCTUATION('=')
+        input-4:3:5: IDENTIFIER('malloc')
+        input-4:3:5: PUNCTUATION('(')
+        input-4:3:5: NUMBER('3')
+        input-4:3:5: PUNCTUATION('*')
+        input-4:3:5: NUMBER('1024')
+        input-4:3:5: PUNCTUATION(')')
+        input-4:3:5: PUNCTUATION(';')
+
+        Variadic macros are supported:
+        >>> for name in ('VV0', 'VV1'): pp.macros[name].pprint(inline=True)
+        #define VV0(__VA_ARGS__): [ __VA_ARGS__ ]
+        #define VV1(X, __VA_ARGS__): X [ __VA_ARGS__ ]
+        >>> for line in process(r'''
+        ...     VV0(1, 2, 3)
+        ...     VV1(1, 2, 3)
+        ... '''):
+        ...     for token in line: token.pprint()
+        input-5:2:5: PUNCTUATION('[')
+        input-5:2:5: NUMBER('1')
+        input-5:2:5: PUNCTUATION(',')
+        input-5:2:5: NUMBER('2')
+        input-5:2:5: PUNCTUATION(',')
+        input-5:2:5: NUMBER('3')
+        input-5:2:5: PUNCTUATION(']')
+        input-5:3:5: NUMBER('1')
+        input-5:3:5: PUNCTUATION('[')
+        input-5:3:5: NUMBER('2')
+        input-5:3:5: PUNCTUATION(',')
+        input-5:3:5: NUMBER('3')
+        input-5:3:5: PUNCTUATION(']')
 
     Possible errors:
 
@@ -295,8 +385,8 @@ class Preprocessor:
                     params.append(param_name)
                     expected = ',)'
                 elif token.value == '...':
-                    # TODO
-                    raise ParseError(token, "Variadic macros not currently supported")
+                    params.append('__VA_ARGS__')
+                    expected = ')'
                 else:
                     # Raises ParseError
                     check(token, 'FAIL')
@@ -337,7 +427,8 @@ class Preprocessor:
             # NOTE: we re-expand the tokens here, even though they were
             # already expanded when the macro was called!
             # See: https://gcc.gnu.org/onlinedocs/cpp/Argument-Prescan.html
-            yield from self.expand(self.bound_macro_params[ident])
+            for expanded_token in self.expand(self.bound_macro_params[ident]):
+                yield expanded_token.copy_with_parents((token,))
         elif ident in self.macros:
             # We found a reference to a macro!
             if ident in self.expanding_macros:
@@ -348,7 +439,8 @@ class Preprocessor:
                 # Expand the macro
                 self.expanding_macros.append(ident)
                 try:
-                    yield from self._expand_macro(token, tokens)
+                    for expanded_token in self._expand_macro(token, tokens):
+                        yield expanded_token.copy_with_parents((token,))
                 finally:
                     assert self.expanding_macros.pop() == ident
         else:
@@ -360,57 +452,55 @@ class Preprocessor:
         r"""Expands a reference to a macro.
 
             >>> pp = Preprocessor()
-            >>> pp.process_side_effects('#define M(X, Y, Z) Z Y X')
+            >>> test_i = 0
+            >>> def process(text):
+            ...     global test_i
+            ...     test_i += 1
+            ...     return list(pp.process(Lexer(f'input-{test_i}').tokenize(text)))
+            >>> _ = process('#define M(X, Y, Z) Z Y X')
 
-            >>> for line in pp.process('M(,,)'):
-            ...     for token in line: token.pprint(with_parents=True)
+            >>> for line in process('M(,,)'):
+            ...     for token in line: token.pprint()
 
-            >>> for line in pp.process('M(1, 2, 3)'):
-            ...     for token in line: token.pprint(with_parents=True)
-            <fakefile>:1:9: NUMBER('3')
-            <fakefile>:1:6: NUMBER('2')
-            <fakefile>:1:3: NUMBER('1')
+            >>> for line in process('M(1, 2, 3)'):
+            ...     for token in line: token.pprint()
+            input-3:1:1: NUMBER('3')
+            input-3:1:1: NUMBER('2')
+            input-3:1:1: NUMBER('1')
 
-            >>> for line in pp.process('M(a 1, b 2, c 3)'):
-            ...     for token in line: token.pprint(with_parents=True)
-            <fakefile>:1:13: IDENTIFIER('c')
-            <fakefile>:1:15: NUMBER('3')
-            <fakefile>:1:8: IDENTIFIER('b')
-            <fakefile>:1:10: NUMBER('2')
-            <fakefile>:1:3: IDENTIFIER('a')
-            <fakefile>:1:5: NUMBER('1')
+            >>> for line in process('M(a 1, b 2, c 3)'):
+            ...     for token in line: token.pprint()
+            input-4:1:1: IDENTIFIER('c')
+            input-4:1:1: NUMBER('3')
+            input-4:1:1: IDENTIFIER('b')
+            input-4:1:1: NUMBER('2')
+            input-4:1:1: IDENTIFIER('a')
+            input-4:1:1: NUMBER('1')
 
             Commas inside parentheses are not treated as param separators:
-            >>> for line in pp.process('M((a, 1), (b, 2), (c, 3))'):
-            ...     for token in line: token.pprint(with_parents=True)
-            <fakefile>:1:19: PUNCTUATION('(')
-            <fakefile>:1:20: IDENTIFIER('c')
-            <fakefile>:1:21: PUNCTUATION(',')
-            <fakefile>:1:23: NUMBER('3')
-            <fakefile>:1:24: PUNCTUATION(')')
-            <fakefile>:1:11: PUNCTUATION('(')
-            <fakefile>:1:12: IDENTIFIER('b')
-            <fakefile>:1:13: PUNCTUATION(',')
-            <fakefile>:1:15: NUMBER('2')
-            <fakefile>:1:16: PUNCTUATION(')')
-            <fakefile>:1:3: PUNCTUATION('(')
-            <fakefile>:1:4: IDENTIFIER('a')
-            <fakefile>:1:5: PUNCTUATION(',')
-            <fakefile>:1:7: NUMBER('1')
-            <fakefile>:1:8: PUNCTUATION(')')
-
-        Possible errors:
-
-            >>> for line in pp.process('M()'): pass
-            Traceback (most recent call last):
-             ...
-            loosey.pplex.ParseError: <fakefile>:1:1: Expected to receive 3 macro parameters, but got 1
+            >>> for line in process('M((a, 1), (b, 2), (c, 3))'):
+            ...     for token in line: token.pprint()
+            input-5:1:1: PUNCTUATION('(')
+            input-5:1:1: IDENTIFIER('c')
+            input-5:1:1: PUNCTUATION(',')
+            input-5:1:1: NUMBER('3')
+            input-5:1:1: PUNCTUATION(')')
+            input-5:1:1: PUNCTUATION('(')
+            input-5:1:1: IDENTIFIER('b')
+            input-5:1:1: PUNCTUATION(',')
+            input-5:1:1: NUMBER('2')
+            input-5:1:1: PUNCTUATION(')')
+            input-5:1:1: PUNCTUATION('(')
+            input-5:1:1: IDENTIFIER('a')
+            input-5:1:1: PUNCTUATION(',')
+            input-5:1:1: NUMBER('1')
+            input-5:1:1: PUNCTUATION(')')
 
         TODO:
 
             A macro call can span multiple lines:
-            >>> for line in pp.process('M(1,\n2,\n3)'):
-            ...     for token in line: token.pprint(with_parents=True)
+            >>> for line in process('M(1,\n2,\n3)'):
+            ...     for token in line: token.pprint()
 
         """
         name = name_token.value
@@ -422,19 +512,13 @@ class Preprocessor:
             # Attempt to parse the parameters being passed to the macro if
             # it's being "called", i.e. if there are parentheses after the
             # the macro name, like `MACRO(...)`.
-            param_values = self._parse_macro_call(tokens)
+            param_values = self._parse_macro_call(macro, tokens)
             if param_values is None:
                 # There are no parentheses after the macro name.
                 # So we're referring to the macro, but not "calling" it.
                 # In this case, we just emit its name.
                 yield name_token
                 return
-
-            if len(param_values) != len(macro.params):
-                # TODO: handle variadic macros T_T
-                raise ParseError(name_token,
-                    f"Expected to receive {len(macro.params)} macro parameters, "
-                    f"but got {len(param_values)}")
 
             # Map parameter names to values, i.e. token sequences
             param_values_dict = {}
@@ -464,16 +548,21 @@ class Preprocessor:
             # See: https://gcc.gnu.org/onlinedocs/cpp/Object-like-Macros.html
             yield from self.expand(macro.body)
 
-    def _parse_macro_call(self, tokens: FancyIterator[Token]) -> Optional[list[list[Token]]]:
+    def _parse_macro_call(self, macro: Macro, tokens: FancyIterator[Token]) -> Optional[list[list[Token]]]:
         r"""Parse a macro call, i.e. `MACRO(...)`.
         If there are no parentheses after the macro name, i.e. just `MACRO`,
         that's fine, we just return None.
 
-            >>> def test(text: str):
+            >>> def test(text: str, n: int, v: bool = False):
             ...     pp = Preprocessor()
             ...     line = next(Lexer().tokenize(text))
             ...     tokens = FancyIterator(line)
-            ...     param_values = pp._parse_macro_call(tokens)
+            ...     params = list(map(str, range(n)))
+            ...     if v: params[-1] = '__VA_ARGS__'
+            ...     macro_token = Token.fake('IDENTIFIER', '<fakemacro>')
+            ...     macro = Macro(name='<fakemacro>', token=macro_token,
+            ...         body=[], params=params)
+            ...     param_values = pp._parse_macro_call(macro, tokens)
             ...     if param_values is None:
             ...         print("Not a macro call!")
             ...         return
@@ -482,23 +571,23 @@ class Preprocessor:
             ...         for token in param_tokens:
             ...             token.pprint(indent='  ')
 
-            >>> test('hello')
+            >>> test('hello', 1)
             Not a macro call!
 
-            >>> test('()')
+            >>> test('()', 1)
             === Param 1:
 
-            >>> test('(,)')
+            >>> test('(,)', 2)
             === Param 1:
             === Param 2:
 
-            >>> test('(1,2)')
+            >>> test('(1,2)', 2)
             === Param 1:
               <fakefile>:1:2: NUMBER('1')
             === Param 2:
               <fakefile>:1:4: NUMBER('2')
 
-            >>> test('((1, 2),(3, 4))')
+            >>> test('((1, 2),(3, 4))', 2)
             === Param 1:
               <fakefile>:1:2: PUNCTUATION('(')
               <fakefile>:1:3: NUMBER('1')
@@ -512,12 +601,38 @@ class Preprocessor:
               <fakefile>:1:13: NUMBER('4')
               <fakefile>:1:14: PUNCTUATION(')')
 
+            For a variadic macro call, the last parameter consumes even ','
+            tokens:
+            >>> test('(1,2,3)', 2, True)
+            === Param 1:
+              <fakefile>:1:2: NUMBER('1')
+            === Param 2:
+              <fakefile>:1:4: NUMBER('2')
+              <fakefile>:1:5: PUNCTUATION(',')
+              <fakefile>:1:6: NUMBER('3')
+
         Possible errors:
 
-            >>> test('(1,2,')
+            >>> test('(1,2)', 1) #doctest: +NORMALIZE_WHITESPACE
             Traceback (most recent call last):
              ...
-            loosey.pplex.ParseError: <fakefile>:1:5: Missing closing ')' for macro call
+            loosey.pp.MacroExpansionError: <fakefile>:1:3:
+            While expanding macro <fakemacro> (defined at <fakefile>:1:1):
+            Expected to receive 1 parameters, but already got that many
+
+            >>> test('(1)', 2) #doctest: +NORMALIZE_WHITESPACE
+            Traceback (most recent call last):
+             ...
+            loosey.pp.MacroExpansionError: <fakefile>:1:3:
+            While expanding macro <fakemacro> (defined at <fakefile>:1:1):
+            Expected to receive 2 parameters, but only got 1
+
+            >>> test('(1,', 2) #doctest: +NORMALIZE_WHITESPACE
+            Traceback (most recent call last):
+             ...
+            loosey.pp.MacroExpansionError: <fakefile>:1:3:
+            While expanding macro <fakemacro> (defined at <fakefile>:1:1):
+            Missing closing ')' for macro call
 
         """
 
@@ -537,6 +652,37 @@ class Preprocessor:
         # would instead get them using `token = yield`.
         # And then the processor would have a `self.macro_call_parser`
         # attribute, which would be either None or a generator.
+        #
+        # ...BUT NO, because we need to peek/unget tokens, in the sense
+        # of FancyIterator.push.
+        # We can't un-yield something!..
+        # Sooooo....
+        #
+        # Omfg, the open paren can even be on the next line. O_o
+        #
+        #   $ echo -e "#define M(X) X X\nM\n(1)" | cpp -P
+        #   1 1
+        #
+        # That's WILD.
+        # Okay, let's think about what we really need out of this.
+        # We definitely need to stream lines in; I don't think we need to
+        # stream individual characters or anything.
+        # But currently, we're streaming lines out; and maybe we don't need
+        # to do that, maybe we can stream tokens out.
+        # Does the preprocessor output ever need to include newlines?..
+        # NO IT DOES NOT! The preprocessor converts all whitespace into
+        # single spaces.
+        # So okay, let's make that change first, then come back here and
+        # see if handling macro calls becomes any easier.
+        #
+        # Hmmmm actually, we could have a "macro call buffer".
+        # Store up tokens until we hit that final ')', then parse the params
+        # all in one go.
+        # But actually never mind, I don't think we gain much -- looking at
+        # the code below, next(tokens) is only called twice: once explicitly
+        # at the start, and then implicitly each time around the for loop.
+        # So I think the number of possible "states" is actually quite small,
+        # so we don't need to mess around with generators and send().
 
         # Check for the opening '(' of the call, if any
         token = next(tokens, None)
@@ -558,14 +704,30 @@ class Preprocessor:
                     break
             elif token.value == '(':
                 paren_depth += 1
-            if paren_depth <= 1 and token.value == ',':
+            if (
+                paren_depth <= 1 and
+                token.value == ',' and
+                not (
+                    macro.is_variadic and
+                    len(param_values) >= len(macro.params) - 1
+                )
+            ):
                 param_values.append(param_value)
+                if len(param_values) >= len(macro.params):
+                    raise MacroExpansionError(macro, token,
+                        f"Expected to receive {len(macro.params)} parameters, "
+                        f"but already got that many")
                 param_value = []
             else:
                 param_value.append(token)
         else:
-            raise ParseError(token, "Missing closing ')' for macro call")
+            raise MacroExpansionError(macro, token,
+                "Missing closing ')' for macro call")
         param_values.append(param_value)
+        if len(param_values) < len(macro.params):
+            raise MacroExpansionError(macro, token,
+                f"Expected to receive {len(macro.params)} parameters, "
+                f"but only got {len(param_values)}")
         return param_values
 
 

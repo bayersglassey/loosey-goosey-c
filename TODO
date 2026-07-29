@@ -33,28 +33,17 @@
 
         String concatenation can be done *after* the preprocessor.
 
+    [ ] Switch from having the preprocessor output lines (i.e. list[Token])
+        and just have it output individual tokens.
+
     [ ] Handle macro calls across multiple lines
 
     [ ] Handle #if and friends
 
+    [ ] Handle #include
+
     [ ] Handle # (stringization) and ## (pasting) operators
 
-
-OKAY, about the preprocessor.
-It uses different tokens than C itself.
-In particular, see "preprocessing numbers":
-https://gcc.gnu.org/onlinedocs/cpp/Tokenization.html
-
-    A preprocessing number has a rather bizarre definition. The category
-    includes all the normal integer and floating point constants one
-    expects of C, but also a number of other things one might not
-    initially recognize as a number.
-    Formally, preprocessing numbers begin with an optional period, a
-    required decimal digit, and then continue with any sequence of
-    letters, digits, underscores, periods, and exponents.
-    ...etc...
-
-So, forget about token types and stuff, let's just track token's location
-and value.
-And let's focus on making the preprocessor's behaviour easy to see, because
-that's our whole purpose here -- making C easier to understand!
+    [ ] SUPPORT BACKSLASH-NEWLINE IN THE MIDDLE OF A TOKEN?!?!?!
+        We could probably do it. It's dumb, but then we could maybe use
+        obfuscated C programs as test input, for fun.
