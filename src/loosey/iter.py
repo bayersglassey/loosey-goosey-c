@@ -32,17 +32,26 @@ class FancyIterator(Generic[T]):
         This makes it safe to try and "coerce" things to FancyIterator,
         without having to worry that you'll throw away the state if the
         thing already is one.
-        >>> FancyIterator(it) is it
+        >>> it = FancyIterator((1, 2, 3))
+        >>> it2 = FancyIterator(it)
+        >>> it2 is it
         True
+        >>> list(it2)
+        [1, 2, 3]
 
     """
 
-    def __new__(cls, arg):
+    def __new__(cls, arg: Iterable[T]):
         if isinstance(arg, FancyIterator):
+            # Don't bother stacking fancy iterators...
             return arg
         return object.__new__(cls)
 
     def __init__(self, things: Iterable[T]):
+        if things is self:
+            # All good, __new__ returned its first argument, and we want to
+            # use that as-is
+            return
         self._it = iter(things)
         self._peek = None
 
@@ -60,6 +69,9 @@ class FancyIterator(Generic[T]):
         if self._peek is None:
             self._peek = next(self._it, None)
         return self._peek
+
+    def empty(self) -> bool:
+        return self.peek() is None
 
     def push(self, value: T):
         if self._peek is not None:
