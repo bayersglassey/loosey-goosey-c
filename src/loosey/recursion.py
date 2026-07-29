@@ -2,7 +2,7 @@ import os
 from inspect import isgeneratorfunction
 from functools import wraps
 
-from loosey.lex import Token, TokenTreeNode
+from loosey.pplex import Token
 
 
 NoneType = type(None)
@@ -12,8 +12,6 @@ def value_tostr(arg) -> str:
         return repr(arg)
     elif isinstance(arg, Token):
         return arg.prettystring()
-    elif isinstance(arg, TokenTreeNode):
-        return f'<{arg.token.prettystring()}>'
     else:
         return '...'
 

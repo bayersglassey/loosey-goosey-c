@@ -208,12 +208,14 @@ TOKEN_PATTERNS = {
     # of "pointy brackets", so it's a special case for the tokenizer
     'INCLUDE'     : r'#[ \t]*include[ \t]*(?:"([^"]*)"|<([^>]*)>)',
 
-    # The preprocessor operators are '#' and '##'.
+    # The preprocessor operators are '#' (stringize) and '##' (token paste
+    # or concatenate).
     # NOTE: the '#' operator might be part of a directive (e.g. #define, #if)
     # or it might be the "stringize" operator, depending on whether we are
     # currently expanding a macro body or not.
     # See also:
     # * https://gcc.gnu.org/onlinedocs/cpp/Stringizing.html
+    # * https://gcc.gnu.org/onlinedocs/cpp/Concatenation.html
     'PP_OPERATOR' : r'##?',
 
     'COMMENT'     : r'//.*' + '|' + r'/\*.*?(?:\*/|$)',
