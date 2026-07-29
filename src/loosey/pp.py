@@ -197,7 +197,7 @@ class Preprocessor:
             filename = filespec[1:-1]
             # TODO: have a whitelist of places it's ok to import from, or
             # just allow all "local" imports, etc.
-            self.warn("Ignoring {'system' if is_system else 'local'} #include of {filename!r}")
+            self.warn(first_token, "Ignoring {'system' if is_system else 'local'} #include of {filename!r}")
         elif first_token.value == '#':
             if len(tokens) == 1:
                 # A '#' on a line by itself must be silently eaten.
@@ -223,11 +223,13 @@ class Preprocessor:
                 name = tokens[2].value
                 self.macros.pop(name, None)
             elif directive == 'warning':
-                self.warn(' '.join(token.value for token in tokens[2:]))
+                self.warn(first_token, ' '.join(token.value for token in tokens[2:]))
             elif directive == 'error':
-                raise ParseError(tokens[0], ' '.join(token.value for token in tokens[2:]))
+                raise ParseError(first_token, ' '.join(token.value for token in tokens[2:]))
+            elif directive in ('if', 'ifdef', 'ifndef', 'elif', 'else', 'endif'):
+                self.warn(first_token, f"TODO: implement #{directive}")
             elif directive in ('pragma', 'line'):
-                self.warn(f"Ignoring #{directive}")
+                self.warn(first_token, f"Ignoring #{directive}")
             else:
                 raise ParseError(first_token, f"Unknown directive: #{directive!r}")
         else:
@@ -238,16 +240,17 @@ class Preprocessor:
     @debug_recursion()
     def _process_define_directive(self, tokens: list[Token]):
         """Process the line of tokens for a #define directive"""
+        first_token = tokens[0]
 
         # Get macro name
         if len(tokens) < 3 or tokens[2].toktype != 'IDENTIFIER':
-            raise ParseError(tokens[0], f"Expected a macro name after #define")
+            raise ParseError(first_token, f"Expected a macro name after #define")
         name = tokens[2].value
 
         # Check for redefinition
         if name in self.macros:
             existing_macro = self.macros[name]
-            self.warn(token,
+            self.warn(first_token,
                 f"Redefining {name!r} (previously defined at {existing_macro.token.location()})")
 
         # The macro is function-like if an open parenthesis appears
@@ -298,12 +301,12 @@ class Preprocessor:
                     # Raises ParseError
                     check(token, 'FAIL')
             if token.value != ')':
-                raise ParseError(tokens[0], "Missing closing ')' for macro parameters")
+                raise ParseError(first_token, "Missing closing ')' for macro parameters")
 
         # Yaaay let's define a macro
         self.macros[name] = Macro(
             name=name,
-            token=tokens[0],
+            token=first_token,
             body=list(rest_of_tokens),
             params=params,
         )

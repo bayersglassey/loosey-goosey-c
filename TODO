@@ -18,7 +18,10 @@
 
     [X] Rename TokenTree to TokenTreeNode
 
-    [ ] Handle string concatenation... OH NOOOO DO WE NEED TO SUPPORT THIS
+    [X] Replace my terminology, "definitions" and "macros", with the official
+        terminology, "macros" and "function-like macros"
+
+    [-] Handle string concatenation... OH NOOOO DO WE NEED TO SUPPORT THIS
         STUFF ACROSS MULTIPLE LINES?!..
         SIMILAR TO WITH MACRO CALLS?!..
         SO ACTUALLY, WE SHOULD BE DOING WAY MORE YIELDING OF INDIVIDUAL
@@ -28,10 +31,13 @@
         We do need to support macro calls taking multiple lines, but that's
         not so bad if it's just that one thing.
 
-    [ ] Handle # (stringization) and ## (pasting) operators
+        String concatenation can be done *after* the preprocessor.
 
-    [ ] Replace my terminology, "definitions" and "macros", with the official
-        terminology, "macros" and "function-like macros"
+    [ ] Handle macro calls across multiple lines
+
+    [ ] Handle #if and friends
+
+    [ ] Handle # (stringization) and ## (pasting) operators
 
 
 OKAY, about the preprocessor.
