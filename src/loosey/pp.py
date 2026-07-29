@@ -78,10 +78,10 @@ class Preprocessor:
         >>> def process(text):
         ...     global test_i
         ...     test_i += 1
-        ...     return list(pp.process(Lexer(f'input-{test_i}').tokenize(text)))
+        ...     yield from pp.process(Lexer(f'input-{test_i}').tokenize(text))
 
         Most preprocessor directives don't have any output of their own:
-        >>> for line in process(r'''
+        >>> for token in process(r'''
         ...     #define K 1024
         ...     #define SIZE 3 * K
         ...     #define DUMMY hello
@@ -93,7 +93,7 @@ class Preprocessor:
         ...     #define VV0(...) [__VA_ARGS__]
         ...     #define VV1(X, ...) X[__VA_ARGS__]
         ... '''):
-        ...     for token in line: token.pprint()
+        ...     token.pprint()
 
         The macros are stored for use in subsequent processing:
         >>> for name, macro in pp.macros.items():
@@ -125,10 +125,10 @@ class Preprocessor:
 
         The definitions are expanded in the usual way.
         Object-like macros take no parameters:
-        >>> for line in process(r'''
+        >>> for token in process(r'''
         ...     size_t size = SIZE;
         ... '''):
-        ...     for token in line: token.pprint()
+        ...     token.pprint()
         input-2:2:5: IDENTIFIER('size_t')
         input-2:2:12: IDENTIFIER('size')
         input-2:2:17: PUNCTUATION('=')
@@ -139,10 +139,10 @@ class Preprocessor:
 
         Tokens track their "parent" tokens, e.g. references to macros and
         their parameters:
-        >>> for line in process(r'''
+        >>> for token in process(r'''
         ...     size_t size = SIZE;
         ... '''):
-        ...     for token in line: token.pprint(with_parents=True)
+        ...     token.pprint(with_parents=True)
         input-3:2:5: IDENTIFIER('size_t')
         input-3:2:12: IDENTIFIER('size')
         input-3:2:17: PUNCTUATION('=')
@@ -164,11 +164,11 @@ class Preprocessor:
         input-3:2:23: PUNCTUATION(';')
 
         Function-like macros are "called" with parameters:
-        >>> for line in process(r'''
+        >>> for token in process(r'''
         ...     char *msg;
         ...     MALLOC(msg, SIZE)
         ... '''):
-        ...     for token in line: token.pprint()
+        ...     token.pprint()
         input-4:2:5: IDENTIFIER('char')
         input-4:2:10: PUNCTUATION('*')
         input-4:2:11: IDENTIFIER('msg')
@@ -187,11 +187,11 @@ class Preprocessor:
         >>> for name in ('VV0', 'VV1'): pp.macros[name].pprint(inline=True)
         #define VV0(__VA_ARGS__): [ __VA_ARGS__ ]
         #define VV1(X, __VA_ARGS__): X [ __VA_ARGS__ ]
-        >>> for line in process(r'''
+        >>> for token in process(r'''
         ...     VV0(1, 2, 3)
         ...     VV1(1, 2, 3)
         ... '''):
-        ...     for token in line: token.pprint()
+        ...     token.pprint()
         input-5:2:5: PUNCTUATION('[')
         input-5:2:5: NUMBER('1')
         input-5:2:5: PUNCTUATION(',')
@@ -248,7 +248,7 @@ class Preprocessor:
             print(f"{token.location()}: {msg}", file=sys.stderr)
 
     @debug_recursion()
-    def process(self, lines: Iterable[list[Token]] | str) -> Iterator[list[Token]]:
+    def process(self, lines: Iterable[list[Token]] | str) -> Iterator[Token]:
         """Process lines of C code"""
         if isinstance(lines, str):
             # Support caller passing us a string, handy for doctests
@@ -259,10 +259,10 @@ class Preprocessor:
     def process_side_effects(self, lines: Iterable[list[Token]] | str):
         """Process lines of C code, for their side effects alone.
         Use this e.g. to define macros."""
-        for line in self.process(lines): pass
+        for token in self.process(lines): pass
 
     @debug_recursion()
-    def process_line(self, line: list[Token]) -> Iterator[list[Token]]:
+    def process_line(self, line: list[Token]) -> Iterator[Token]:
         """Processes the given line of C code, yielding zero or more lines.
         Why zero or more?.. because most preprocessor directives don't produce
         any tokens at all, and #include can produce many!..
@@ -299,7 +299,6 @@ class Preprocessor:
                 #   A null directive is understood as a preprocessing
                 #   directive but has no effect on the preprocessor output.
                 #
-                yield []
                 return
             # Handle preprocessor directives other than #import
             directive = tokens[1].value
@@ -325,7 +324,7 @@ class Preprocessor:
         else:
             # This line was not a preprocessor directive!
             # Return the tokens, with any macros expanded
-            yield list(self.expand(tokens))
+            yield from self.expand(tokens)
 
     @debug_recursion()
     def _process_define_directive(self, tokens: list[Token]):
@@ -459,17 +458,17 @@ class Preprocessor:
             ...     return list(pp.process(Lexer(f'input-{test_i}').tokenize(text)))
             >>> _ = process('#define M(X, Y, Z) Z Y X')
 
-            >>> for line in process('M(,,)'):
-            ...     for token in line: token.pprint()
+            >>> for token in process('M(,,)'):
+            ...     token.pprint()
 
-            >>> for line in process('M(1, 2, 3)'):
-            ...     for token in line: token.pprint()
+            >>> for token in process('M(1, 2, 3)'):
+            ...     token.pprint()
             input-3:1:1: NUMBER('3')
             input-3:1:1: NUMBER('2')
             input-3:1:1: NUMBER('1')
 
-            >>> for line in process('M(a 1, b 2, c 3)'):
-            ...     for token in line: token.pprint()
+            >>> for token in process('M(a 1, b 2, c 3)'):
+            ...     token.pprint()
             input-4:1:1: IDENTIFIER('c')
             input-4:1:1: NUMBER('3')
             input-4:1:1: IDENTIFIER('b')
@@ -478,8 +477,8 @@ class Preprocessor:
             input-4:1:1: NUMBER('1')
 
             Commas inside parentheses are not treated as param separators:
-            >>> for line in process('M((a, 1), (b, 2), (c, 3))'):
-            ...     for token in line: token.pprint()
+            >>> for token in process('M((a, 1), (b, 2), (c, 3))'):
+            ...     token.pprint()
             input-5:1:1: PUNCTUATION('(')
             input-5:1:1: IDENTIFIER('c')
             input-5:1:1: PUNCTUATION(',')
@@ -499,8 +498,8 @@ class Preprocessor:
         TODO:
 
             A macro call can span multiple lines:
-            >>> for line in process('M(1,\n2,\n3)'):
-            ...     for token in line: token.pprint()
+            >>> for token in process('M(1,\n2,\n3)'):
+            ...     token.pprint()
 
         """
         name = name_token.value
@@ -740,14 +739,15 @@ def main():
     filename = args.filename
     try:
         lines = tokenize_file(filename)
-        if not args.lex_only:
-            lines = Preprocessor().process(lines)
-        for line in lines:
-            for token in line:
-                if args.tree:
-                    print(' ' * (token.col - 1) + token.value)
-                else:
-                    print(f"{token.row}:{token.col}: {token.prettystring()}")
+        if args.lex_only:
+            tokens = (token for line in lines for token in line)
+        else:
+            tokens = Preprocessor().process(lines)
+        for token in tokens:
+            if args.tree:
+                print(' ' * (token.col - 1) + token.value)
+            else:
+                print(f"{token.row}:{token.col}: {token.prettystring()}")
     except BrokenPipeError:
         # So we can pipe ourselves into "less" and quit before lexing the
         # whole file, etc
