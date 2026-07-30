@@ -1,0 +1,30 @@
+
+From the docs of the "mcpp" preprocessor:
+https://mcpp.sourceforge.net/
+
+    C90 made clear the procedure by
+    specifying the translation phases as follows:
+
+    1. Map source file characters to source character
+    set, if necessary. Replace trigraphs.
+
+    2. Delete <backslash><newline> sequences, splicing physical source lines to form logical source
+    lines.
+
+    3. Decompose source file to preprocessing-tokens
+    and white space sequences. Replace each comment by one space character. <newline>s are
+    retained.
+
+    4. Execute preprocessing directives, expand macro
+    invocations. Process header file named by #include directive from phase 1 through phase 4,
+    recursively.
+
+    5. Convert from source character set to execution character set, including escape sequences in
+    string literals and character constants.
+
+    6. Concatenate adjacent string literals.
+
+    7. Convert preprocessing-tokens into tokens and compile.
+
+    8. Link.
+
