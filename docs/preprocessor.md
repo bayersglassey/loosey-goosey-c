@@ -53,6 +53,9 @@ will suffice.
 
 Specifically, we definitely don't support these official features:
 * Trigraphs
+* Using backslash-at-end-of-line to glue together a token which starts
+  at the end of one line and ends at the start of the next line, or to
+  continue a single-line comment (`// ...`) over multiple lines
 * The complete macro call behaviour, with "painting tokens blue", or
   whatever is going on in "Dave Prosser's C Preprocessing Algorithm"
 * Macro calls *dynamically* causing "token pasting" or "stringization"

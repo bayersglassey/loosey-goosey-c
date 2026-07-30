@@ -20,6 +20,8 @@
     I also used the GNU C preprocessor's excellent documentation:
     https://gcc.gnu.org/onlinedocs/cpp/Tokenization.html
 
+    See also: docs/preprocessor.md
+
 """
 
 import re
@@ -100,8 +102,12 @@ class Token(NamedTuple):
         return self.line.filename
 
     @property
-    def row(self) -> str:
+    def row(self) -> int:
         return self.line.row
+
+    @property
+    def end(self) -> int:
+        return self.col + len(self.value)
 
     def identifier(self) -> Optional[str]:
         if self.toktype == 'IDENTIFIER':
@@ -289,7 +295,8 @@ INCLUDE_REGEX = re.compile(TOKEN_PATTERNS['INCLUDE'])
 # with multiple small ones: this approach hopefully lets us execute less slow
 # Python code and more fast C code, and I believe it lets us allocate fewer
 # Python strings, since AFAIK there's no way to pass a start location to
-# .match().
+# .match(), so if we were popping off a token at a time, we would have to
+# create a fresh string representing the remainder of the line each time.
 TOKEN_REGEX = re.compile('|'.join(
     f'(?P<{toktype}>{pattern})'
     for toktype, pattern in TOKEN_PATTERNS.items()))
@@ -395,6 +402,12 @@ class Lexer:
          ...
         loosey.pplex.ParseError: <fakefile>:1:5: Expected another line
 
+        >>> list(Lexer().tokenize('1 2 hello\\')) #doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:5: Got IDENTIFIER('hello')
+        immediately followed by backslash+newline. We don't support this!
+
     """
 
     def __init__(self, file: SourceFile | str = '<fakefile>'):
@@ -495,7 +508,7 @@ class Lexer:
                     ))
                     self.row += 1
                     self.tokens_from_prev_line = tokens
-                    return
+                    return None
                 else:
                     # The comment ends in this line, so chop it off and
                     # process the rest of the line
@@ -538,6 +551,19 @@ class Lexer:
                     self.in_multiline_comment = True
 
                 tokens.append(token)
+
+            last_token = None if not tokens else tokens[-1]
+            if (
+                line_ended_with_backslash and
+                last_token and last_token.toktype != 'COMMENT' and
+                last_token.end == 1 + block_comment_chopped + len(line)
+            ):
+                # The C standards people are crazy to have allowed this...
+                # It's like they forsaw the International Obfuscated C Code
+                # Contest and welcomed its coming
+                raise ParseError(last_token,
+                    f"Got {last_token.prettystring()} immediately followed by backslash+newline. "
+                    "We don't support this!")
 
             self.row += 1
 

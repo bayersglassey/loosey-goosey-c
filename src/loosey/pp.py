@@ -7,6 +7,8 @@
     * https://en.cppreference.com/c/preprocessor
     * https://home.cs.colorado.edu/~main/cs1300/doc/gnu/cpp_toc.html
 
+    See also: docs/preprocessor.md
+
 """
 
 import sys
@@ -137,6 +139,8 @@ class MacroCallParser:
             >>> test('(1,', mkmacro(2))
             Waiting for more input...
 
+            >>> test('()', mkmacro(0))
+
             >>> test('()', mkmacro(1))
             === Param 1:
 
@@ -193,6 +197,13 @@ class MacroCallParser:
 
         Possible errors:
 
+            >>> test('(1)', mkmacro(0)) #doctest: +NORMALIZE_WHITESPACE
+            Traceback (most recent call last):
+             ...
+            loosey.pp.MacroExpansionError: <fakefile>:1:2:
+            While expanding macro <fakemacro> (defined at <fakefile>:1:1):
+            Expected no parameters
+
             >>> test('(1,2)', mkmacro(1)) #doctest: +NORMALIZE_WHITESPACE
             Traceback (most recent call last):
              ...
@@ -231,6 +242,8 @@ class MacroCallParser:
                 self.paren_depth -= 1
                 if self.paren_depth < 1:
                     break
+            elif len(macro.params) == 0:
+                raise MacroExpansionError(macro, token, "Expected no parameters")
             elif token.value == '(':
                 self.paren_depth += 1
             if (
@@ -254,7 +267,12 @@ class MacroCallParser:
             # and wait for process() to be called again with more input.
             return None
 
-        param_values.append(param_value)
+        if len(macro.params) == 0 and not param_values and not param_value:
+            # The call's parameter list was totally empty... and that's okay,
+            # because the macro didn't expect any parameters!
+            pass
+        else:
+            param_values.append(param_value)
 
         if len(param_values) < len(macro.params):
             raise MacroExpansionError(macro, token,
@@ -488,12 +506,7 @@ class Preprocessor:
 
     @debug_recursion()
     def process_line(self, line: list[Token]) -> Iterator[Token]:
-        """Processes the given line of C code, yielding zero or more lines.
-        Why zero or more?.. because most preprocessor directives don't produce
-        any tokens at all, and #include can produce many!..
-        Also, we might be in the middle of an #if...#endif construct, in which
-        case we might not produce any lines.
-        """
+        """Processes the given line of C code, yielding tokens."""
 
         # Strip out comments
         tokens = [token for token in line if token.toktype != 'COMMENT']
@@ -653,20 +666,16 @@ class Preprocessor:
             # See: https://gcc.gnu.org/onlinedocs/cpp/Argument-Prescan.html
             for expanded_token in self.expand(self.bound_macro_params[ident]):
                 yield expanded_token.copy_with_parents((token,))
-        elif ident in self.macros:
-            # We found a reference to a macro!
-            if ident in self.expanding_macros:
-                # Macros do not recurse!..
-                # See: https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
-                yield token
-            else:
-                # Expand the macro
-                self.expanding_macros.append(ident)
-                try:
-                    for expanded_token in self._expand_macro(token, tokens):
-                        yield expanded_token.copy_with_parents((token,))
-                finally:
-                    assert self.expanding_macros.pop() == ident
+        elif ident in self.macros and ident not in self.expanding_macros:
+            # NOTE: macros do not recurse!..
+            # See: https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
+            # We found a reference to a macro! Expand it
+            self.expanding_macros.append(ident)
+            try:
+                for expanded_token in self._expand_macro(token, tokens):
+                    yield expanded_token.copy_with_parents((token,))
+            finally:
+                assert self.expanding_macros.pop() == ident
         else:
             # Regular token, yield it as-is!
             yield token
