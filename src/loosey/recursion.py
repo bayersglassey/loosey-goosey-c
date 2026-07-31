@@ -105,7 +105,10 @@ def debug_recursion(*, method=True, max_depth=MAX_DEPTH, force=False):
     """
     def decorator(func):
         if not force and not ACTIVE:
-            # Do nothing!
+            # Use the function as-is, don't wrap it at all.
+            # That's important, because Python function calls are expensive!
+            # So, we can use @debug_recursion without slowing things down if
+            # we don't have the debugging enabled.
             return func
         func_name = func.__name__
         def dump_args(args, kwargs, depth):

@@ -56,10 +56,6 @@ Specifically, we definitely don't support these official features:
 * Using backslash-at-end-of-line to glue together a token which starts
   at the end of one line and ends at the start of the next line, or to
   continue a single-line comment (`// ...`) over multiple lines
-* The complete macro call behaviour, with "painting tokens blue", or
-  whatever is going on in "Dave Prosser's C Preprocessing Algorithm"
-* Macro calls *dynamically* causing "token pasting" or "stringization"
-* Any kind of recursion whatsoever
 * ...probably some other things I'm forgetting
 
 
@@ -126,21 +122,40 @@ What it means to "**expand** a token sequence":
             * Otherwise, **expand** the macro (see below)
         * If it decided that this was a call,
             * Get the param values from the macro call parser
+                * **Expand** each param value (this is known as
+                  "pre-scanning")
             * Update bound param values
             * **Expand** the macro (see below)
             * Restore bound param values
     * Otherwise, do one of the following:
         * If token is `__FILE__` or `__LINE__`, **yield** a token
           consisting of the current filename or line number
-        * If token is `#`, do "stringizing"
-            * See: https://gcc.gnu.org/onlinedocs/cpp/Stringizing.html
+        * If token is `#`, do "stringizing":
+            * Get the *next* token
+            * If it's the name of a bound macro parameter, join the tokens
+              of the corresponding token sequence together (separated by
+              single spaces), and turn that into a string literal token,
+              and **yield** that, e.g. if X is bound to the sequence `1 2`,
+              then `# X` -> `"1 2"`
+            * Otherwise, turn the token itself into a string literal token,
+              and **yield** that, e.g. `# X` -> `"X"`
+            * See also: https://gcc.gnu.org/onlinedocs/cpp/Stringizing.html
         * If *current* token is `##`, that's an error!
-        * If *next* token is `##`, do "token pasting", a.k.a. "concatenation"
-            * See: https://gcc.gnu.org/onlinedocs/cpp/Concatenation.html
-        * If token is a bound macro parameter, **expand** the
+        * If *next* token is `##`, do "token pasting", a.k.a. "concatenation":
+            * Grab the 2 tokens on either side of the `##`
+            * For each of those 2 tokens, if it's the name of a bound macro
+              parameter, get the corresponding token sequence, otherwise
+              just use the token as a sequence of length 1
+            * We now have a pair of token sequences, e.g. `a b c` and `1 2 3`
+            * Remove the first sequence's last token, and the second
+              sequence's first token, and glue those 2 tokens together
+            * **Yield** the two token sequences, with the glued-together
+              token in the middle, e.g. `a b c1 2 3`
+            * See also: https://gcc.gnu.org/onlinedocs/cpp/Concatenation.html
+        * If token is the name of a bound macro parameter, **expand** the
           corresponding token sequence
         * If token is a macro name, and that macro is not in the
-          macro expand stack,
+          macro expand stack (to prevent recursion),
             * If macro is function-like, start the **macro call parser**
               (see below), but don't hand off control to it yet
             * Otherwise, **expand** the macro
@@ -190,3 +205,50 @@ to get next token) is essentially:
         * The current param value is complete, so start a new one
           for the next macro parameter
     * Otherwise, append token to current param value
+
+
+## Bonus examples of preprocessor shenanigans
+
+By the way, POP QUIZ!.. what should the preprocessor output given the
+following?
+(NOTE: we're redefining the function-like macro M partway through calling
+it, and passing its output to itself.)
+```
+#define M(X, Y) [old X Y]
+M(
+  cat,
+#undef M
+#define M(X) [new X]
+  M(dog)
+)
+```
+
+If you answered `[old cat [new dog]]`, then congratulations, the GNU implementation
+of the C preprocessor (`cpp`) says you're right!
+```
+$ echo -e '#define M(X, Y) [old X Y]\nM(cat,\n#undef M\n#define M(X) [new X]\nM(dog))' | cpp -P
+[old cat [new dog]]
+
+$ # If we change M(dog) to M(dog, hen), we get a complaint:
+$ echo -e '#define M(X, Y) [old X Y]\nM(cat,\n#undef M\n#define M(X) [new X]\nM(dog, hen))' | cpp -P
+<stdin>:5:12: error: macro "M" passed 2 arguments, but takes just 1
+<stdin>:4: note: macro "M" defined here
+[old cat M]
+```
+
+Our implementation disagrees. You may have redefined M partway through
+calling it, but we use the the original definition for any *ongoing* calls.
+```
+$ echo -e '#define M(X, Y) [old X Y]\nM(cat,\n#undef M\n#define M(X) [new X]\nM(dog))' | python -m loosey.pp
+
+$ # If we change M(dog) to M(dog, hen), it works:
+$ echo -e '#define M(X, Y) [old X Y]\nM(cat,\n#undef M\n#define M(X) [new X]\nM(dog, hen))' | python -m loosey.pp
+[old cat [old dog hen]]
+
+$ # If we call M again, once its redefinition *and* call are complete, it
+$ # uses the new definition, i.e. accepts 1 argument:
+$ echo -e '#define M(X, Y) [old X Y]\nM(cat,\n#undef M\n#define M(X) [new X]\nM(dog, hen))\nM(rat)' | python -m loosey.pp
+[old cat [old dog hen]] [new rat]
+```
+
+Imagine trying to standardise this behaviour!..

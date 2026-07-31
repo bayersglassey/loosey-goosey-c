@@ -33,10 +33,10 @@
 
         String concatenation can be done *after* the preprocessor.
 
-    [ ] Switch from having the preprocessor output lines (i.e. list[Token])
+    [X] Switch from having the preprocessor output lines (i.e. list[Token])
         and just have it output individual tokens.
 
-    [ ] Handle macro calls across multiple lines
+    [X] Handle macro calls across multiple lines
 
     [ ] Handle #if and friends
 

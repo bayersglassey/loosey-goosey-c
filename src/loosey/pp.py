@@ -79,6 +79,133 @@ NO_CALL = NoCall()
 
 
 class MacroCallParser:
+    r"""Parses macro calls, i.e. the `(...)` in `MACRO(...)`.
+    If there are no parentheses after the macro name, i.e. just `MACRO`,
+    that's fine, we just return NO_CALL.
+    If we run out of tokens to process, we return None, and wait for
+    more input.
+
+        >>> def tokenize(text):
+        ...     for line in Lexer().tokenize(text):
+        ...         yield from line
+
+        >>> def mkmacro(n: int, v: bool = False) -> Macro:
+        ...     params = list(map(str, range(n)))
+        ...     if v: params[-1] = '__VA_ARGS__'
+        ...     macro_token = Token.fake('IDENTIFIER', '<fakemacro>')
+        ...     return Macro(name='<fakemacro>', token=macro_token,
+        ...         body=[], params=params)
+
+        >>> def feed(parser, text):
+        ...     tokens = FancyIterator(tokenize(text))
+        ...     param_values = parser.process(tokens)
+        ...     if param_values is None:
+        ...         print('Waiting for more input...')
+        ...     elif param_values is NO_CALL:
+        ...         print("Not a macro call!")
+        ...         if not tokens.empty():
+        ...             print('Unprocessed tokens:')
+        ...             for token in tokens: token.pprint()
+        ...     else:
+        ...         for i, param_tokens in enumerate(param_values):
+        ...             print(f"=== Param {i + 1}:")
+        ...             for token in param_tokens:
+        ...                 token.pprint(indent='  ')
+
+        >>> def test(text: str, macro: Macro):
+        ...     parser = MacroCallParser(macro,
+        ...         Token.fake('IDENTIFIER', macro.name))
+        ...     feed(parser, text)
+
+        >>> test('hello world', mkmacro(1))
+        Not a macro call!
+        Unprocessed tokens:
+        <fakefile>:1:1: IDENTIFIER('hello')
+        <fakefile>:1:7: IDENTIFIER('world')
+
+        >>> test('(1,', mkmacro(2))
+        Waiting for more input...
+
+        >>> test('()', mkmacro(0))
+
+        >>> test('()', mkmacro(1))
+        === Param 1:
+
+        >>> test('(,)', mkmacro(2))
+        === Param 1:
+        === Param 2:
+
+        >>> test('(1,2)', mkmacro(2))
+        === Param 1:
+          <fakefile>:1:2: NUMBER('1')
+        === Param 2:
+          <fakefile>:1:4: NUMBER('2')
+
+        >>> test('((1, 2),(3, 4))', mkmacro(2))
+        === Param 1:
+          <fakefile>:1:2: PUNCTUATION('(')
+          <fakefile>:1:3: NUMBER('1')
+          <fakefile>:1:4: PUNCTUATION(',')
+          <fakefile>:1:6: NUMBER('2')
+          <fakefile>:1:7: PUNCTUATION(')')
+        === Param 2:
+          <fakefile>:1:9: PUNCTUATION('(')
+          <fakefile>:1:10: NUMBER('3')
+          <fakefile>:1:11: PUNCTUATION(',')
+          <fakefile>:1:13: NUMBER('4')
+          <fakefile>:1:14: PUNCTUATION(')')
+
+        For a variadic macro call, the last parameter can contain commas:
+        >>> test('(1,2,3)', mkmacro(2, True))
+        === Param 1:
+          <fakefile>:1:2: NUMBER('1')
+        === Param 2:
+          <fakefile>:1:4: NUMBER('2')
+          <fakefile>:1:5: PUNCTUATION(',')
+          <fakefile>:1:6: NUMBER('3')
+
+        Multiple lines worth of input can be processed:
+        >>> macro = mkmacro(2)
+        >>> parser = MacroCallParser(macro,
+        ...     Token.fake('IDENTIFIER', macro.name))
+        >>> feed(parser, '(')
+        Waiting for more input...
+        >>> feed(parser, '1')
+        Waiting for more input...
+        >>> feed(parser, ',')
+        Waiting for more input...
+        >>> feed(parser, '2')
+        Waiting for more input...
+        >>> feed(parser, ')')
+        === Param 1:
+          <fakefile>:1:1: NUMBER('1')
+        === Param 2:
+          <fakefile>:1:1: NUMBER('2')
+
+    Possible errors:
+
+        >>> test('(1)', mkmacro(0)) #doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+         ...
+        loosey.pp.MacroExpansionError: <fakefile>:1:2:
+        While expanding macro <fakemacro> (defined at <fakefile>:1:1):
+        Expected no parameters
+
+        >>> test('(1,2)', mkmacro(1)) #doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+         ...
+        loosey.pp.MacroExpansionError: <fakefile>:1:3:
+        While expanding macro <fakemacro> (defined at <fakefile>:1:1):
+        Expected to receive 1 parameters, but already got that many
+
+        >>> test('(1)', mkmacro(2)) #doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+         ...
+        loosey.pp.MacroExpansionError: <fakefile>:1:3:
+        While expanding macro <fakemacro> (defined at <fakefile>:1:1):
+        Expected to receive 2 parameters, but only got 1
+
+    """
 
     def __init__(self, macro: Macro, call_token: Token):
         self.macro = macro
@@ -92,133 +219,6 @@ class MacroCallParser:
         self.paren_depth = 0
 
     def process(self, tokens: Iterable[Token]) -> list[list[Token]] | NoCall | None:
-        r"""Parses macro calls, i.e. the `(...)` in `MACRO(...)`.
-        If there are no parentheses after the macro name, i.e. just `MACRO`,
-        that's fine, we just return NO_CALL.
-        If we run out of tokens to process, we return None, and wait for
-        more input.
-
-            >>> def tokenize(text):
-            ...     for line in Lexer().tokenize(text):
-            ...         yield from line
-
-            >>> def mkmacro(n: int, v: bool = False) -> Macro:
-            ...     params = list(map(str, range(n)))
-            ...     if v: params[-1] = '__VA_ARGS__'
-            ...     macro_token = Token.fake('IDENTIFIER', '<fakemacro>')
-            ...     return Macro(name='<fakemacro>', token=macro_token,
-            ...         body=[], params=params)
-
-            >>> def feed(parser, text):
-            ...     tokens = FancyIterator(tokenize(text))
-            ...     param_values = parser.process(tokens)
-            ...     if param_values is None:
-            ...         print('Waiting for more input...')
-            ...     elif param_values is NO_CALL:
-            ...         print("Not a macro call!")
-            ...         if not tokens.empty():
-            ...             print('Unprocessed tokens:')
-            ...             for token in tokens: token.pprint()
-            ...     else:
-            ...         for i, param_tokens in enumerate(param_values):
-            ...             print(f"=== Param {i + 1}:")
-            ...             for token in param_tokens:
-            ...                 token.pprint(indent='  ')
-
-            >>> def test(text: str, macro: Macro):
-            ...     parser = MacroCallParser(macro,
-            ...         Token.fake('IDENTIFIER', macro.name))
-            ...     feed(parser, text)
-
-            >>> test('hello world', mkmacro(1))
-            Not a macro call!
-            Unprocessed tokens:
-            <fakefile>:1:1: IDENTIFIER('hello')
-            <fakefile>:1:7: IDENTIFIER('world')
-
-            >>> test('(1,', mkmacro(2))
-            Waiting for more input...
-
-            >>> test('()', mkmacro(0))
-
-            >>> test('()', mkmacro(1))
-            === Param 1:
-
-            >>> test('(,)', mkmacro(2))
-            === Param 1:
-            === Param 2:
-
-            >>> test('(1,2)', mkmacro(2))
-            === Param 1:
-              <fakefile>:1:2: NUMBER('1')
-            === Param 2:
-              <fakefile>:1:4: NUMBER('2')
-
-            >>> test('((1, 2),(3, 4))', mkmacro(2))
-            === Param 1:
-              <fakefile>:1:2: PUNCTUATION('(')
-              <fakefile>:1:3: NUMBER('1')
-              <fakefile>:1:4: PUNCTUATION(',')
-              <fakefile>:1:6: NUMBER('2')
-              <fakefile>:1:7: PUNCTUATION(')')
-            === Param 2:
-              <fakefile>:1:9: PUNCTUATION('(')
-              <fakefile>:1:10: NUMBER('3')
-              <fakefile>:1:11: PUNCTUATION(',')
-              <fakefile>:1:13: NUMBER('4')
-              <fakefile>:1:14: PUNCTUATION(')')
-
-            For a variadic macro call, the last parameter can contain commas:
-            >>> test('(1,2,3)', mkmacro(2, True))
-            === Param 1:
-              <fakefile>:1:2: NUMBER('1')
-            === Param 2:
-              <fakefile>:1:4: NUMBER('2')
-              <fakefile>:1:5: PUNCTUATION(',')
-              <fakefile>:1:6: NUMBER('3')
-
-            Multiple lines worth of input can be processed:
-            >>> macro = mkmacro(2)
-            >>> parser = MacroCallParser(macro,
-            ...     Token.fake('IDENTIFIER', macro.name))
-            >>> feed(parser, '(')
-            Waiting for more input...
-            >>> feed(parser, '1')
-            Waiting for more input...
-            >>> feed(parser, ',')
-            Waiting for more input...
-            >>> feed(parser, '2')
-            Waiting for more input...
-            >>> feed(parser, ')')
-            === Param 1:
-              <fakefile>:1:1: NUMBER('1')
-            === Param 2:
-              <fakefile>:1:1: NUMBER('2')
-
-        Possible errors:
-
-            >>> test('(1)', mkmacro(0)) #doctest: +NORMALIZE_WHITESPACE
-            Traceback (most recent call last):
-             ...
-            loosey.pp.MacroExpansionError: <fakefile>:1:2:
-            While expanding macro <fakemacro> (defined at <fakefile>:1:1):
-            Expected no parameters
-
-            >>> test('(1,2)', mkmacro(1)) #doctest: +NORMALIZE_WHITESPACE
-            Traceback (most recent call last):
-             ...
-            loosey.pp.MacroExpansionError: <fakefile>:1:3:
-            While expanding macro <fakemacro> (defined at <fakefile>:1:1):
-            Expected to receive 1 parameters, but already got that many
-
-            >>> test('(1)', mkmacro(2)) #doctest: +NORMALIZE_WHITESPACE
-            Traceback (most recent call last):
-             ...
-            loosey.pp.MacroExpansionError: <fakefile>:1:3:
-            While expanding macro <fakemacro> (defined at <fakefile>:1:1):
-            Expected to receive 2 parameters, but only got 1
-
-        """
         tokens = FancyIterator(tokens)
 
         if not self.paren_depth:
@@ -499,9 +499,9 @@ class Preprocessor:
         for line in lines:
             yield from self.process_line(line)
 
-    def process_side_effects(self, lines: Iterable[list[Token]] | str):
-        """Process lines of C code, for their side effects alone.
-        Use this e.g. to define macros."""
+    def execute(self, lines: Iterable[list[Token]] | str):
+        """Process lines of C code for their side effects (i.e. directives)
+        alone, e.g. to define macros, include files, etc."""
         for token in self.process(lines): pass
 
     @debug_recursion()
@@ -640,15 +640,95 @@ class Preprocessor:
 
     @debug_recursion()
     def expand(self, tokens: Iterable[Token]) -> Iterator[Token]:
+        """Expand the given stream of tokens, i.e. apply macros within them,
+        yielding a modified stream of tokens."""
+
         # We want our tokens to be in a "fancy" iterator, so that we can e.g.
         # peek at the next one without actually consuming it!
         tokens = FancyIterator(tokens)
 
         for token in tokens:
-            # NOTE: there's not much point to factoring self._expand_token
-            # out of the loop here, except that it allows the token to show
-            # up in the output of debug_recursion, which is super useful!
-            yield from self._expand_token(token, tokens)
+            if self.macro_call_parser is not None:
+                # We're in the midst of parsing a macro call, e.g. `MACRO(...)`
+                # Put the token back onto the iterator, and hand off to the
+                # MacroCallParser to parse from here instead
+                tokens.push(token)
+                yield from self._parse_macro_call(tokens)
+            else:
+                # We're not parsing a macro, so do whatever we normally do
+                yield from self._expand_token(token, tokens)
+
+    @debug_recursion()
+    def _parse_macro_call(self, tokens: FancyIterator[Token]) -> Iterator[Token]:
+        """Parse the tokens immediately following a reference to a
+        function-like macro.
+        That is, we've already consumed a token like `MACRO`, and determined
+        that it is function-like, and now we are checking whether it's
+        followed by a call, e.g. `(...args...)`."""
+
+        call_parser = self.macro_call_parser
+        call_token = call_parser.call_token
+        macro = call_parser.macro
+        assert macro.is_function_like
+
+        param_values = call_parser.process(tokens)
+
+        if param_values is None:
+            # The call parser didn't finish parsing yet, so it's waiting
+            # for us to pass it the next line of tokens.
+            # We don't have that yet either, so for now we do nothing!
+            return
+
+        # The call parser returned *something*, so we're done parsing the
+        # current call, so remove the parser from the preprocessor.
+        self.macro_call_parser = None
+
+        if param_values is NO_CALL:
+            # There are no parentheses after the macro name.
+            # So we're referring to the macro, but not "calling" it.
+            # In this case, we just emit its name.
+            yield call_parser.call_token
+            return
+
+        # Map parameter names to values, i.e. token sequences
+        param_values_dict = {}
+        for param_name, param_tokens in zip(macro.params, param_values):
+            # NOTE: we pre-expand the parameter values here, before passing
+            # them into the macro body below.
+            # But why?!.. mostly because at this point, the macro we're
+            # calling isn't yet in self.expanding_macros, so we can support
+            # "nested macro calls", e.g. `M(M(1))`.
+            # It's not the same thing as recursion, which would be if M's
+            # *body* contained a call to M, and we expanded that.
+            # See also: https://gcc.gnu.org/onlinedocs/cpp/Argument-Prescan.html
+            param_values_dict[param_name] = [
+                expanded_token.copy_with_parents((call_token,))
+                for expanded_token in self.expand(param_tokens)]
+
+        # Now, we store the parameter values in a dict on self, so that
+        # they can be referred to while the macro body is being expanded
+        old_params = self.bound_macro_params
+        self.bound_macro_params = old_params.copy()
+        self.bound_macro_params.update(param_values_dict)
+        try:
+            yield from self._expand_macro_body(macro, call_token, tokens)
+        finally:
+            # ...and roll back the parameter values, now that the
+            # macro body has been expanded
+            self.bound_macro_params = old_params
+
+    @debug_recursion()
+    def _expand_macro_body(self, macro: Macro, token: Token, tokens: Iterable[Token]) -> Iterator[Token]:
+        # NOTE: macros do not recurse!.. so we have to keep track of
+        # which ones we are currently in the process of expanding.
+        # See: https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
+        self.expanding_macros.append(macro.name)
+        try:
+            # Expand the macro's body
+            for expanded_token in self.expand(macro.body):
+                yield expanded_token.copy_with_parents((token,))
+        finally:
+            assert self.expanding_macros.pop() == macro.name
 
     @debug_recursion()
     def _expand_token(self, token: Token, tokens: FancyIterator[Token]) -> Iterator[Token]:
@@ -667,15 +747,28 @@ class Preprocessor:
             for expanded_token in self.expand(self.bound_macro_params[ident]):
                 yield expanded_token.copy_with_parents((token,))
         elif ident in self.macros and ident not in self.expanding_macros:
-            # NOTE: macros do not recurse!..
+            # NOTE: macros do not recurse!.. thus the check for `ident not in
+            # self.expanding_macros`.
             # See: https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
-            # We found a reference to a macro! Expand it
-            self.expanding_macros.append(ident)
-            try:
-                for expanded_token in self._expand_macro(token, tokens):
-                    yield expanded_token.copy_with_parents((token,))
-            finally:
-                assert self.expanding_macros.pop() == ident
+            macro = self.macros[ident]
+            if macro.is_function_like:
+                # Function-like macro!
+                # See: https://gcc.gnu.org/onlinedocs/cpp/Function-like-Macros.html
+
+                # Attempt to parse the parameters being passed to the macro if
+                # it's being "called", i.e. if there are parentheses after the
+                # the macro name, like `MACRO(...)`.
+                # NOTE: we just create the parser here, we don't call it yet.
+                # That's because a macro call might span multiple lines, and we
+                # only have access to a single line's worth of tokens right now.
+                # So the "macro call parser" can't be a single function call, it
+                # needs to be a thing which lives on the preprocessor, and survives
+                # parse all available tokens, then wait for more.
+                self.macro_call_parser = MacroCallParser(macro, token)
+            else:
+                # Object-like macro! Just expand its body.
+                # See: https://gcc.gnu.org/onlinedocs/cpp/Object-like-Macros.html
+                yield from self._expand_macro_body(macro, token, tokens)
         else:
             # Regular token, yield it as-is!
             yield token
@@ -736,6 +829,9 @@ class Preprocessor:
             A macro call can span multiple lines:
             >>> for token in process('M(1,\n2,\n3)'):
             ...     token.pprint()
+            input-6:1:1: NUMBER('3')
+            input-6:1:1: NUMBER('2')
+            input-6:1:1: NUMBER('1')
 
         """
         name = name_token.value
@@ -747,43 +843,9 @@ class Preprocessor:
             # Attempt to parse the parameters being passed to the macro if
             # it's being "called", i.e. if there are parentheses after the
             # the macro name, like `MACRO(...)`.
-            call_parser = MacroCallParser(macro, name_token)
-            param_values = call_parser.process(tokens)
-            if param_values is NO_CALL:
-                # There are no parentheses after the macro name.
-                # So we're referring to the macro, but not "calling" it.
-                # In this case, we just emit its name.
-                yield name_token
-                return
-
-            if param_values is None:
-                # TODO
-                raise MacroExpansionError(macro, name_token,
-                    "Multi-line macro calls not yet supported!")
-
-            # Map parameter names to values, i.e. token sequences
-            param_values_dict = {}
-            for param_name, param_tokens in zip(macro.params, param_values):
-                # NOTE: we re-expand the tokens here, even though they were
-                # already expanded when the macro was called!
-                # See: https://gcc.gnu.org/onlinedocs/cpp/Argument-Prescan.html
-                param_values_dict[param_name] = param_tokens
-
-            # Now, we store the parameter values in a dict on self, so that
-            # they can be referred to while the macro body is being expanded
-            old_params = self.bound_macro_params
-            self.bound_macro_params = old_params.copy()
-            self.bound_macro_params.update(param_values_dict)
-            try:
-                # Expand the macro's body!
-                # NOTE: we do this twice: once here, re-expand the tokens here, even though they were
-                # already expanded when the macro was called!
-                # See: https://gcc.gnu.org/onlinedocs/cpp/Argument-Prescan.html
-                yield from self.expand(macro.body)
-            finally:
-                # ...and roll back the parameter values, now that the
-                # macro body has been expanded
-                self.bound_macro_params = old_params
+            # NOTE: we just create the parser here, we don't call it yet.
+            # That will be done by _expand_token.
+            self.macro_call_parser = MacroCallParser(macro, name_token)
         else:
             # Object-like macro! Just expand its body.
             # See: https://gcc.gnu.org/onlinedocs/cpp/Object-like-Macros.html
@@ -792,23 +854,34 @@ class Preprocessor:
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('filename', default='-', help="Use '-' for stdin")
-    parser.add_argument('-t', '--tree', action='store_true')
-    parser.add_argument('-l', '--lex-only', action='store_true')
+    parser.add_argument('-f', '--filename', nargs='*', help="Use '-' for stdin")
+    parser.add_argument('-i', '--token-info', default=False, action='store_true')
+    parser.add_argument('-t', '--tree', default=False, action='store_true')
+    parser.add_argument('-l', '--lex-only', default=False, action='store_true')
+    parser.add_argument('-q', '--quiet', default=False, action='store_true')
+    parser.add_argument('-M', '--dump-macros', default=False, action='store_true')
     args = parser.parse_args()
-    filename = args.filename
+    filenames = args.filename or ['-']
     try:
-        lines = tokenize_file(filename)
-        if args.lex_only:
-            tokens = (token for line in lines for token in line)
-        else:
-            with Preprocessor() as pp:
-                tokens = pp.process(lines)
-        for token in tokens:
-            if args.tree:
-                print(' ' * (token.col - 1) + token.value)
+        pp = Preprocessor(verbose=not args.quiet)
+        for filename in filenames:
+            print(f"=== Processing: {filename}")
+            lines = tokenize_file(filename)
+            if args.lex_only:
+                tokens = (token for line in lines for token in line)
             else:
-                print(f"{token.row}:{token.col}: {token.prettystring()}")
+                with pp:
+                    tokens = pp.process(lines)
+            for token in tokens:
+                if args.tree:
+                    print(' ' * (token.col - 1) + token.value)
+                elif args.token_info:
+                    token.pprint()
+                else:
+                    print(token.value)
+            if args.dump_macros:
+                for name, macro in pp.macros.items():
+                    macro.pprint()
     except BrokenPipeError:
         # So we can pipe ourselves into "less" and quit before lexing the
         # whole file, etc

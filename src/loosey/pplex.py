@@ -408,6 +408,12 @@ class Lexer:
         loosey.pplex.ParseError: <fakefile>:1:5: Got IDENTIFIER('hello')
         immediately followed by backslash+newline. We don't support this!
 
+        >>> list(Lexer().tokenize('1 2 // comment... \\')) #doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:5: Got COMMENT('// comment... ')
+        immediately followed by backslash+newline. We don't support this!
+
     """
 
     def __init__(self, file: SourceFile | str = '<fakefile>'):
@@ -554,8 +560,7 @@ class Lexer:
 
             last_token = None if not tokens else tokens[-1]
             if (
-                line_ended_with_backslash and
-                last_token and last_token.toktype != 'COMMENT' and
+                line_ended_with_backslash and last_token and
                 last_token.end == 1 + block_comment_chopped + len(line)
             ):
                 # The C standards people are crazy to have allowed this...
