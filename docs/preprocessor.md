@@ -86,6 +86,11 @@ multiple lines of input to be considered a single line of output:
 
 ### The algorithms
 
+These are the algorithms used by the preprocessor.
+They should be broadly accurate, but it's possible that the code has changed
+since I wrote these out here, and of course the code does more error handling
+than what is explicitly mentioned here.
+
 Some terminology:
 * An "object-like" macro is one which doesn't have any parameters,
   e.g. `#define MACRO ...etc...`.

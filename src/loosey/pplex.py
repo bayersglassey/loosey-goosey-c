@@ -73,6 +73,15 @@ class Token(NamedTuple):
     # expansion, etc
     parents: TokenParents = ()
 
+    @property
+    def parent_depth(self) -> int:
+        depth = 0
+        parents = self.parents
+        while parents:
+            parents = parents[0].parents
+            depth += 1
+        return depth
+
     @staticmethod
     def fake(toktype: str, value: str = '') -> 'Token':
         """Generate a token with fake location info, for use e.g. in

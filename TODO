@@ -18,6 +18,8 @@
 
     [X] Rename TokenTree to TokenTreeNode
 
+        [X] ...but actually, get rid of TokenTreeNode
+
     [X] Replace my terminology, "definitions" and "macros", with the official
         terminology, "macros" and "function-like macros"
 
@@ -43,6 +45,23 @@
     [ ] Handle #include
 
     [ ] Handle # (stringization) and ## (pasting) operators
+
+    [ ] FIGURE OUT HOW TO TEST OUR PP VS GNU'S (AND/OR CLANG'S)
+        ...AFAICT, there is no way to get clang or cpp to output a single
+        token per line.
+        So, in order to do a proper comparison, we would need to... output
+        proper whitespace ourselves?!.. ewwww....
+
+        Ah ha, we can include whitespace throughout the input!
+        And then replace whitespace in the output with newlines.
+        Like:
+
+            #define M(X) [ X ]
+            M(M(1))
+            #################
+            [ [ 1 ] ]
+
+        See: pptest.sh
 
     [ ] SUPPORT BACKSLASH-NEWLINE IN THE MIDDLE OF A TOKEN?!?!?!
         We could probably do it. It's dumb, but then we could maybe use

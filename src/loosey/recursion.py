@@ -153,3 +153,11 @@ def debug_recursion(*, method=True, max_depth=MAX_DEPTH, force=False):
                     _depth -= 1
         return wrapped_func
     return decorator
+
+
+if ACTIVE:
+    def debug_recursion_log(msg: str):
+        print('  ' * (_depth - 1) + f"-> {msg}")
+else:
+    def debug_recursion_log(msg: str):
+        pass
