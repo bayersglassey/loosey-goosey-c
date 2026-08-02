@@ -922,6 +922,12 @@ def main():
                         print('  ' * debug_depth + token.value)
                     if token.toktype == 'DEBUG' and token.value.startswith('START:'):
                         debug_depth += 1
+            elif args.token_info:
+                for token in tokens:
+                    token.pprint()
+            elif args.tree:
+                for token in tokens:
+                    print(' ' * (token.col - 1) + token.value)
             else:
                 row = col = 1
                 tokens = FancyIterator(tokens)
