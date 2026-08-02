@@ -80,7 +80,7 @@ I also moved the explanatory text into the code itself, as comments.
         // parenthesis and the macro itself, and an empty set.
         else if TS is T^HS * "(" * TS' and T is functionlike then
             check TS' is actuals * ")"^HS' * TS'' and actuals are correct for T
-            return expand(subst(ts(T), fp(T), actuals, (HS & HS1) | {T}, {}) * TS'');
+            return expand(subst(ts(T), fp(T), actuals, (HS & HS') | {T}, {}) * TS'');
 
         // Otherwise, the token sequence must be some other token. The result is the expansion of the rest of the
         // token sequence, preceded by the token (including its hide set).
