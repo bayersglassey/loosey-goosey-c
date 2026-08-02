@@ -12,6 +12,7 @@ just_output=false
 while test "$#" -ge 1; do
     opt="$1"
     case "$opt" in
+        -m|--mode) mode="$2"; shift 2;;
         -i|--input) just_input=true; shift;;
         -o|--output) just_output=true; shift;;
         --) shift; break;;
@@ -29,9 +30,10 @@ normalize() (
 )
 
 if test "$mode" = cpp; then
-    pp() ( cpp -P )
+    # NOTE: -iquote specifies paths to be used with #include "..."
+    pp() ( cpp -P -iquote pptests )
 elif test "$mode" = loosey; then
-    pp() ( python -m loosey.pp )
+    pp() ( python -m loosey.pp --local-dir pptests )
 else
     die "Unrecognized mode: $mode"
 fi
@@ -56,6 +58,7 @@ if test "$just_input" = true; then
 fi
 
 for file in $files; do
+    echo "================================================================"
     echo "=== Testing: $file"
     echo "=== Input:"
     input "$file"

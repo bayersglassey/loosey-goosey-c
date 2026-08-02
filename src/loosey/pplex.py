@@ -260,7 +260,7 @@ TOKEN_PATTERNS = {
 
     # The #include directive is the only place where a string lives inside
     # of "pointy brackets", so it's a special case for the tokenizer
-    'INCLUDE'     : r'#[ \t]*include[ \t]*(?:"([^"]*)"|<([^>]*)>)',
+    'INCLUDE'     : r'#[ \t]*include[ \t]*("(?:[^"]*)"|<(?:[^>]*)>)',
 
     # The preprocessor operators are '#' (stringize) and '##' (token paste
     # or concatenate).

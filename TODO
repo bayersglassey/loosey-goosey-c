@@ -40,9 +40,9 @@
 
     [X] Handle macro calls across multiple lines
 
-    [ ] Handle #if and friends
+    [X] Handle #include
 
-    [ ] Handle #include
+    [ ] Handle #if and friends
 
     [ ] Handle # (stringization) and ## (pasting) operators
 

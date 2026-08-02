@@ -11,6 +11,7 @@
 
 """
 
+import os
 import sys
 from typing import NamedTuple, Iterable, Iterator, Optional
 from argparse import ArgumentParser
@@ -452,12 +453,39 @@ class Preprocessor:
 
     """
 
-    def __init__(self, *, verbose: bool = True, add_debug_nodes: bool = False):
+    # Attributes shared with sub-processors (i.e. Preprocessor instances created
+    # when processing #include directives)
+    SHARED_ATTRS = (
+        'verbose',
+        'warn_stdout',
+        'add_debug_nodes',
+        'sys_dirs',
+        'local_dir',
+        'macros',
+    )
+
+    def __init__(
+            self,
+            *,
+            verbose: bool = True,
+            warn_stdout: bool = False,
+            add_debug_nodes: bool = False,
+            sys_dirs: Iterable[str] = (),
+            local_dir: Optional[str] = None,
+            macros: Optional[dict[str, Macro]] = None,
+            ):
         self.verbose = verbose
+        self.warn_stdout = warn_stdout
         self.add_debug_nodes = add_debug_nodes
 
+        # Directories used for #include <...>
+        self.sys_dirs = tuple(sys_dirs)
+
+        # Directory used for #include "..."
+        self.local_dir = local_dir
+
         # Defined macros
-        self.macros: dict[str, Macro] = {}
+        self.macros: dict[str, Macro] = {} if macros is None else macros
 
         # The "call stack" for macro expansion
         self.expanding_macros: list[str] = []
@@ -473,11 +501,11 @@ class Preprocessor:
         # will be non-None
         self.macro_call_parser: Optional[MacroCallParser] = None
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.finish()
+    def create_child(self, **kwargs) -> 'Preprocessor':
+        for k in self.SHARED_ATTRS:
+            if k not in kwargs:
+                kwargs[k] = getattr(self, k)
+        return Preprocessor(**kwargs)
 
     @debug_recursion()
     def finish(self) -> Iterator[Token]:
@@ -495,7 +523,11 @@ class Preprocessor:
 
     def warn(self, token: Token, msg: str):
         if self.verbose:
-            print(f"{token.location()}: {msg}", file=sys.stderr)
+            fullmsg = f"{token.location()}: {msg}"
+            if self.warn_stdout:
+                print(fullmsg)
+            else:
+                print(fullmsg, file=sys.stderr)
 
     @debug_recursion()
     def process(self, lines: Iterable[list[Token]] | str, *, finish: bool = True) -> Iterator[Token]:
@@ -525,17 +557,15 @@ class Preprocessor:
 
         # Process directives, if any
         first_token = tokens[0]
-        if first_token.toktype == 'IMPORT':
+        if first_token.toktype == 'INCLUDE':
             # Handle the #import directive
             if len(tokens) > 1:
                 raise ParseError(tokens[1], "Extra tokens after directive arguments")
-            match = INCLUDE_REGEX.fullmatch(token.value)
+            match = INCLUDE_REGEX.fullmatch(first_token.value)
             filespec = match.group(1)
             is_system = filespec[0] == '<'
             filename = filespec[1:-1]
-            # TODO: have a whitelist of places it's ok to import from, or
-            # just allow all "local" imports, etc.
-            self.warn(first_token, "Ignoring {'system' if is_system else 'local'} #include of {filename!r}")
+            yield from self.include(filename, is_system, first_token)
         elif first_token.value == '#':
             if len(tokens) == 1:
                 # A '#' on a line by itself must be silently eaten.
@@ -575,6 +605,29 @@ class Preprocessor:
             # We pass finish=False, because this is only one line, not yet
             # the end-of-file.
             yield from self.expand(tokens, finish=False)
+
+    def include(self, filename: str, is_system: bool = False, token: Token = None) -> Iterator[Token]:
+        if is_system:
+            for sys_dir in self.sys_dirs:
+                filepath = os.path.join(sys_dir, filename)
+                if os.path.isfile(filepath):
+                    break
+            else:
+                filepath = None
+        else:
+            if self.local_dir is not None:
+                filepath = os.path.join(self.local_dir, filename)
+                if not os.path.isfile(filepath):
+                    filepath = None
+            else:
+                filepath = None
+        if filepath is None:
+            local_or_sys = 'system' if is_system else 'local'
+            self.warn(token, f"File not found for {local_or_sys} include: {filename!r}")
+            return
+        lines = tokenize_file(filepath)
+        sub_pp = self.create_child()
+        yield from sub_pp.process(lines)
 
     @debug_recursion()
     def _process_define_directive(self, tokens: list[Token]):
@@ -882,68 +935,63 @@ class Preprocessor:
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('-f', '--filename', nargs='*', help="Use '-' for stdin")
+    parser.add_argument('-f', '--filename', default='-', help="Use '-' for stdin")
+    parser.add_argument('--local-dir', help="Directory used for #include \"...\"")
     parser.add_argument('-i', '--token-info', default=False, action='store_true')
+    parser.add_argument('-I', '--include-sys', default=[], action='append')
     parser.add_argument('-t', '--tree', default=False, action='store_true')
     parser.add_argument('-l', '--lex-only', default=False, action='store_true')
     parser.add_argument('-q', '--quiet', default=False, action='store_true')
     parser.add_argument('-d', '--debug', default=False, action='store_true')
+    parser.add_argument('-w', '--warn-stdout', default=False, action='store_true')
     parser.add_argument('-M', '--dump-macros', default=False, action='store_true')
     args = parser.parse_args()
-    filenames = args.filename or ['-']
+    filename = args.filename
     try:
+        if args.local_dir is not None:
+            local_dir = args.local_dir
+        elif filename != '-':
+            local_dir = os.path.dirname(filename)
+        else:
+            local_dir = '.'
         pp = Preprocessor(
             verbose=not args.quiet,
+            warn_stdout=args.warn_stdout,
             add_debug_nodes=args.debug,
+            local_dir=local_dir,
+            sys_dirs=args.include_sys,
         )
-        for filename in filenames:
-            if not args.quiet and len(filenames) > 1:
-                print(f"=== Processing: {filename}", file=sys.stderr)
-            lines = tokenize_file(filename)
-            if args.lex_only:
-                tokens = (token for line in lines for token in line)
-            else:
-                with pp:
-                    tokens = pp.process(lines)
+        lines = tokenize_file(filename)
+        if args.lex_only:
+            tokens = (token for line in lines for token in line)
+        else:
+            tokens = pp.process(lines)
 
-            if args.dump_macros:
-                for name, macro in pp.macros.items():
-                    macro.pprint()
-            elif args.debug:
-                debug_depth = 0
-                for token in tokens:
-                    if token.toktype == 'DEBUG' and token.value.startswith('END:'):
-                        debug_depth -= 1
-                    if args.tree:
-                        print(' ' * (token.col - 1) + token.value)
-                    elif args.token_info:
-                        token.pprint()
-                    else:
-                        print('  ' * debug_depth + token.value)
-                    if token.toktype == 'DEBUG' and token.value.startswith('START:'):
-                        debug_depth += 1
-            elif args.token_info:
-                for token in tokens:
-                    token.pprint()
-            elif args.tree:
-                for token in tokens:
+        if args.dump_macros:
+            for name, macro in pp.macros.items():
+                macro.pprint()
+        elif args.debug:
+            debug_depth = 0
+            for token in tokens:
+                if token.toktype == 'DEBUG' and token.value.startswith('END:'):
+                    debug_depth -= 1
+                if args.tree:
                     print(' ' * (token.col - 1) + token.value)
-            else:
-                row = col = 1
-                tokens = FancyIterator(tokens)
-                first_token = tokens.peek()
-                if first_token is not None:
-                    row = first_token.row
-                    col = first_token.col
-                for token in tokens:
-                    if token.col != col:
-                        print()
-                    elif token is not first_token:
-                        print(' ', end='')
-                    print(token.value, end='')
-                    row = token.row
-                    col = token.col
-                print()
+                elif args.token_info:
+                    token.pprint()
+                else:
+                    print('  ' * debug_depth + token.value)
+                if token.toktype == 'DEBUG' and token.value.startswith('START:'):
+                    debug_depth += 1
+        elif args.token_info:
+            for token in tokens:
+                token.pprint()
+        elif args.tree:
+            for token in tokens:
+                print(' ' * (token.col - 1) + token.value)
+        else:
+            for token in tokens:
+                print(token.value)
     except BrokenPipeError:
         # So we can pipe ourselves into "less" and quit before lexing the
         # whole file, etc
