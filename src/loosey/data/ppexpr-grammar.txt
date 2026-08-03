@@ -1,0 +1,108 @@
+# Modified from this ANSI C yacc grammmar file I got from the Internet:
+# https:#www.lysator.liu.se/c/ANSI-C-grammar-y.html
+#
+#     In 1985, Jeff Lee published his Yacc grammar (which is accompanied by a
+#     matching Lex specification) for the April 30, 1985 draft version of the
+#     ANSI C standard.
+#     Tom Stockfisch reposted it to net.sources in 1987; that original, as
+#     mentioned in the answer to question 17.25 of the comp.lang.c FAQ, can be
+#     ftp'ed from ftp.uu.net, file usenet/net.sources/ansi.c.grammar.Z.
+#
+#     Jutta Degener, 1995
+#
+# ...thanks, Jutta! :)
+# - BAG, 2026
+
+primary_expression
+    | IDENTIFIER
+    | CHAR
+    | NUMBER
+    | '(' expression ')'
+    ;
+
+unary_expression
+    | ( unary_operator )* primary_expression
+    ;
+
+unary_operator
+    | '+'
+    | '-'
+    | '~'
+    | '!'
+    ;
+
+multiplicative_operator
+    | '*'
+    | '/'
+    | '%'
+    ;
+
+multiplicative_expression
+    | unary_expression ( multiplicative_operator unary_expression )*
+    ;
+
+additive_operator
+    | '+'
+    | '-'
+    ;
+
+additive_expression
+    | multiplicative_expression ( additive_operator multiplicative_expression )*
+    ;
+
+shift_operator
+    | '<<'
+    | '>>'
+    ;
+
+shift_expression
+    | additive_expression ( shift_operator additive_expression )*
+    ;
+
+relational_operator
+    | '<'
+    | '>'
+    | '<='
+    | '>='
+    ;
+
+relational_expression
+    | shift_expression ( relational_operator shift_expression )*
+    ;
+
+equality_operator
+    | '=='
+    | '!='
+    ;
+
+equality_expression
+    | relational_expression ( equality_operator relational_expression )*
+    ;
+
+and_expression
+    | equality_expression ( '&' equality_expression )*
+    ;
+
+exclusive_or_expression
+    | and_expression ( '^' and_expression )*
+    ;
+
+inclusive_or_expression
+    | exclusive_or_expression ( '|' exclusive_or_expression )*
+    ;
+
+logical_and_expression
+    | inclusive_or_expression ( '&&' inclusive_or_expression )*
+    ;
+
+logical_or_expression
+    | logical_and_expression ( '||' logical_and_expression )*
+    ;
+
+conditional_expression
+    | logical_or_expression ( '?' expression ':' conditional_expression )?
+    ;
+
+expression
+    | conditional_expression ( ',' conditional_expression )*
+    ;

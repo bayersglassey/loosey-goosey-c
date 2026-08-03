@@ -26,6 +26,7 @@
 
 import re
 import sys
+from ast import literal_eval
 from typing import NamedTuple, Iterable, Iterator, Optional
 
 
@@ -42,6 +43,19 @@ def from_string_literal(value: str) -> str:
     # HACK: json.loads is prooooobably good enough
     import json
     return json.loads(value)
+
+
+def to_char_literal(s: str) -> str:
+    """Produce a C char literal (i.e. for use as Token.value) from a
+    Python string"""
+    # HACK: repr is prooooobably good enough
+    return repr(s)
+
+
+def from_char_literal(value: str) -> str:
+    """Produce a Python string from a C string literal"""
+    # HACK: literal_eval is prooooobably good enough
+    return literal_eval(value)
 
 
 class SourceFile(NamedTuple):

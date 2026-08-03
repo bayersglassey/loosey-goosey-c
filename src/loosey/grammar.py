@@ -205,6 +205,13 @@ class ParseMatch(NamedTuple):
 
     children: list['ParseMatch']
 
+    def prettystring(self):
+        if self.children:
+            children_s = ' '.join(child.prettystring() for child in self.children)
+            return f'({self.rule_name} {children_s})'
+        else:
+            return self.token.value
+
     def pprint(self, depth=0):
         if self.children:
             print('  ' * depth + self.rule_name)
