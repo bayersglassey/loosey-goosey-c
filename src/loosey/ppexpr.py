@@ -34,6 +34,34 @@ def get_grammar_rules() -> dict[str, GrammarRule]:
 
 
 def parse_pp_expr(tokens: list[Token] | str) -> ParseMatch:
+    """Parses the given conditional expression into a tree structure
+
+        >>> parse_pp_expr('x < 3? ~!y + 2: 2 * 3 * 4 + 10, 99').pprint()
+        expression
+          conditional_expression
+            relational_expression
+              x
+              <
+              3
+            additive_expression
+              unary_expression
+                ~
+                !
+                y
+              +
+              2
+            additive_expression
+              multiplicative_expression
+                2
+                *
+                3
+                *
+                4
+              +
+              10
+          99
+
+    """
     if isinstance(tokens, str):
         # Support caller passing us a string, handy for doctests
         tokens = [token for line in Lexer().tokenize(tokens)
@@ -43,7 +71,7 @@ def parse_pp_expr(tokens: list[Token] | str) -> ParseMatch:
     return parser.match()
 
 
-def parse_number(token: Token) -> int:
+def _parse_number(token: Token) -> int:
     text = token.value
     if '.' in text:
         raise ParseError(token, f"Floats not allowed in preprocessor expressions: {text!r}")
@@ -58,14 +86,14 @@ def parse_number(token: Token) -> int:
         raise ParseError(token, f"Couldn't parse as number: {text!r}")
 
 
-def eval_match(match: ParseMatch) -> int:
+def _eval_match(match: ParseMatch) -> int:
     if match.rule_name == 'expression':
         # Comma operator, value is that of last argument
-        value = eval_match(match.children[-1])
+        value = _eval_match(match.children[-1])
     elif match.rule_name == 'primary_expression':
         token = match.token
         if token.toktype == 'NUMBER':
-            return parse_number(token)
+            return _parse_number(token)
         elif token.toktype == 'CHAR':
             c = from_char_literal(token.value)
             return ord(c)
@@ -75,7 +103,7 @@ def eval_match(match: ParseMatch) -> int:
             return 0
     elif match.rule_name == 'unary_expression':
         children = reversed(match.children)
-        value = eval_match(next(children))
+        value = _eval_match(next(children))
         for child in children:
             op = child.token.value
             if op == '+':
@@ -92,20 +120,20 @@ def eval_match(match: ParseMatch) -> int:
         return value
     elif match.rule_name == 'conditional_expression':
         # Ternary operator
-        condval = eval_match(match.children[0])
-        return eval_match(match.children[1 if condval else 2])
+        condval = _eval_match(match.children[0])
+        return _eval_match(match.children[1 if condval else 2])
     else:
         # Binary expression
         single_op = SINGLE_OPS.get(match.rule_name)
         children = iter(match.children)
-        value = eval_match(next(children))
+        value = _eval_match(next(children))
         for child in children:
             if single_op:
                 op = single_op
             else:
                 op = child.token.value
                 child = next(children)
-            arg = eval_match(child)
+            arg = _eval_match(child)
             if op == '*':
                 value *= arg
             elif op == '/':
@@ -149,7 +177,7 @@ def eval_match(match: ParseMatch) -> int:
 
 
 def eval_pp_expr(tokens: list[Token] | str) -> int:
-    r"""
+    r"""Evaluates a C preprocessor conditional expression
 
         >>> eval_pp_expr("1")
         1
@@ -294,4 +322,4 @@ def eval_pp_expr(tokens: list[Token] | str) -> int:
         #
         tokens_s = ' '.join(token.value for token in tokens)
         raise ParseError(first_token, f"Couldn't parse as preprocessor expression: {tokens_s}")
-    return eval_match(match)
+    return _eval_match(match)
