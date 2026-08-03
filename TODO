@@ -61,7 +61,7 @@
 
     [X] Handle #if and friends
 
-    [ ] Handle `#if defined`
+    [X] Handle `#if defined`
 
     [ ] Handle # (stringization) and ## (pasting) operators
 

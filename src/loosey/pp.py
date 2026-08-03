@@ -547,13 +547,9 @@ class Preprocessor:
         return Preprocessor(**kwargs)
 
     @debug_recursion()
-    def finish(self) -> Iterator[Token]:
-        """To be called when there are no more tokens to be processed, e.g.
-        end of file"""
-        if self.ifstack:
-            frame = self.ifstack[-1]
-            self.ifstack.clear()
-            raise ParseError(frame.token, f"Unterminated #{frame.directive}")
+    def finish_expand(self) -> Iterator[Token]:
+        """To be called when there are no more tokens to be expanded, e.g.
+        end of file, end of macro body, etc"""
         call_parser = self.macro_call_parser
         if call_parser is not None:
             if call_parser.finish() is NO_CALL:
@@ -563,6 +559,16 @@ class Preprocessor:
                 yield call_parser.call_token
             debug_recursion_log(f"Finished parsing non-call reference to macro: {self.macro_call_parser.macro.name}")
             self.macro_call_parser = None
+
+    @debug_recursion()
+    def finish_file(self) -> Iterator[Token]:
+        """To be called when there are no more tokens to be processed, e.g.
+        end of file"""
+        yield from self.finish_expand()
+        if self.ifstack:
+            frame = self.ifstack[-1]
+            self.ifstack.clear()
+            raise ParseError(frame.token, f"Unterminated #{frame.directive}")
 
     def warn(self, token: Token, msg: str):
         if self.verbose:
@@ -581,7 +587,7 @@ class Preprocessor:
         for line in lines:
             yield from self.process_line(line)
         if finish:
-            yield from self.finish()
+            yield from self.finish_file()
 
     @debug_recursion()
     def execute(self, lines: Iterable[list[Token]] | str, *, finish: bool = True):
@@ -669,7 +675,7 @@ class Preprocessor:
             elif directive == 'error':
                 raise ParseError(first_token, ' '.join(token.value for token in tokens[2:]))
             elif directive in ('if', 'ifdef', 'ifndef', 'elif', 'else', 'endif'):
-                self._handle_conditional(tokens)
+                yield from self._handle_conditional(tokens)
             elif directive in ('pragma', 'line'):
                 self.warn(first_token, f"Ignoring #{directive}")
             else:
@@ -713,22 +719,164 @@ class Preprocessor:
             yield from child_pp.process(lines)
 
     @debug_recursion()
-    def _evaluate_if(self, conditional: str, tokens: list[Token]) -> bool:
-        # TODO: handle the 'defined' operator
-        value = eval_pp_expr(tokens)
-        return bool(value)
+    def _evaluate_conditional_expr(self, tokens: list[Token]) -> bool:
+        """Evaluates the conditional expression of #if, #elif, etc.
+
+            >>> pp = Preprocessor()
+            >>> pp.execute('#define EXISTS')
+            >>> pp.execute('#define ADD(X, Y) (X + Y)')
+            >>> def test(line: str) -> bool:
+            ...     tokens = Lexer().tokenize_line(line)
+            ...     return pp._evaluate_conditional_expr(tokens)
+
+            >>> test('#if 1 + 1')
+            True
+
+            >>> test('#if 1 - 1')
+            False
+
+            Macros are expanded:
+            >>> test('#if ADD(1, 1)')
+            True
+
+            >>> test('#if ADD(1, -1)')
+            False
+
+            The 'defined' operator is implemented:
+            >>> test('#if defined EXISTS')
+            True
+
+            >>> test('#if defined NOT_EXISTS')
+            False
+
+            The 'defined' operator accepts parentheses:
+            >>> test('#if defined(EXISTS)')
+            True
+
+            >>> test('#if defined(NOT_EXISTS)')
+            False
+
+            >>> test('#if defined EXISTS && ! defined NOT_EXISTS')
+            True
+
+            >>> test('#if defined EXISTS && defined NOT_EXISTS')
+            False
+
+        Possible errors:
+
+            >>> test('#if defined 1')
+            Traceback (most recent call last):
+             ...
+            loosey.pplex.ParseError: <fakefile>:1:13: Expected IDENTIFIER or '(', got: NUMBER('1')
+
+            >>> test('#if defined()')
+            Traceback (most recent call last):
+             ...
+            loosey.pplex.ParseError: <fakefile>:1:13: Expected IDENTIFIER, got: PUNCTUATION(')')
+
+            >>> test('#if defined(X Y')
+            Traceback (most recent call last):
+             ...
+            loosey.pplex.ParseError: <fakefile>:1:15: Expected ')', got: IDENTIFIER('Y')
+
+            >>> test('#if defined(X')
+            Traceback (most recent call last):
+             ...
+            loosey.pplex.ParseError: <fakefile>:1:1: Expected ')', got: end-of-line
+
+        """
+
+        # Prepare to parse the conditional expression, i.e. the tokens after
+        # #if, #elif, etc.
+        first_token = tokens[0]
+        directive = tokens[1].value
+        if len(tokens) < 3:
+            raise ParseError(first_token, "Missing conditional expression for #{directive}")
+
+        # Prepare an iterator of tokens starting at the conditional expression
+        tokens_it = iter(tokens)
+        next(tokens_it) # '#'
+        next(tokens_it) # directive, e.g. 'if', 'elif'
+
+        # State for a simple parser which recognizes the token sequences
+        # 'define IDENTIFIER' and 'define(IDENTIFIER)'
+        expected = ''
+        defined_token = None
+        need_close = False
+        def unexpected(token: Optional[Token]):
+            expected_msg = ' or '.join(
+                'IDENTIFIER' if c == 'i' else repr(c)
+                for c in expected)
+            got_msg = token.prettystring() if token else 'end-of-line'
+            msg = f"Expected {expected_msg}, got: {got_msg}"
+            return ParseError(token or first_token, msg)
+
+        # Process the tokens, i.e. replace 'define IDENTIFIER' and
+        # 'define(IDENTIFIER)' sequences with '1' or '0' depending on whether
+        # the indicated identifier is in self.macros
+        processed_tokens = []
+        for token in tokens_it:
+            if not expected:
+                if token.value == 'defined':
+                    defined_token = token
+                    expected = 'i('
+                else:
+                    processed_tokens.append(token)
+            elif token.value == '(':
+                if '(' not in expected:
+                    raise unexpected(token)
+                expected = 'i'
+                need_close = True
+            elif token.value == ')':
+                if ')' not in expected:
+                    raise unexpected(token)
+                expected = ''
+            elif token.toktype == 'IDENTIFIER':
+                if 'i' not in expected:
+                    raise unexpected(token)
+                if token.value in self.macros:
+                    # Yes, this identifier *is* defined as a macro
+                    value = '1'
+                    parents = (defined_token, self.macros[token.value].token)
+                else:
+                    # No, this identifier *not* defined as a macro
+                    value = '0'
+                    parents = (defined_token,)
+                processed_tokens.append(Token.from_parents(parents, 'NUMBER', value))
+                expected = ')' if need_close else ''
+                need_close = False
+                defined_token = None
+            else:
+                raise unexpected(token)
+        if expected:
+            raise unexpected(None)
+
+        # Expand the conditional expression
+        # NOTE: we strip 'DEBUG' tokens because the conditional expression
+        # parser will be confused by them!
+        expanded_tokens = [token
+            for token in self.expand(processed_tokens,
+                expand_token=first_token,
+                expand_msg=f"Expanding conditional for #{directive}")
+            if token.toktype != 'DEBUG']
+
+        # Evaluate the conditional expression
+        return bool(eval_pp_expr(expanded_tokens))
 
     def push_conditional(self, frame: ConditionalFrame):
         if not frame.was_true:
             self.skip_depth += 1
         self.ifstack.append(frame)
 
+    def pop_conditional(self) -> ConditionalFrame:
+        return self.ifstack.pop()
+
     @debug_recursion()
-    def _handle_conditional(self, tokens: list[Token]):
+    def _handle_conditional(self, tokens: list[Token]) -> Iterator[Token]:
         first_token = tokens[0]
         directive = tokens[1].value
         if directive in 'if':
-            is_true = self._evaluate_if(directive, tokens[2:])
+            is_true = self._evaluate_conditional_expr(tokens)
             self.push_conditional(ConditionalFrame(
                 token=first_token,
                 directive=directive,
@@ -738,7 +886,12 @@ class Preprocessor:
             if len(tokens) > 3 or tokens[2].toktype != 'IDENTIFIER':
                 raise ParseError(first_token, f"Expected a single macro name after #{directive}")
             name = tokens[2].value
-            is_true = name in self.macros
+            if name in self.macros:
+                is_true = True
+                parents = (first_token, self.macros[name].token)
+            else:
+                is_true = False
+                parents = (first_token,)
             if directive == 'ifndef':
                 is_true = not is_true
             self.push_conditional(ConditionalFrame(
@@ -749,14 +902,14 @@ class Preprocessor:
         elif directive in ('elif', 'else'):
             if not self.ifstack:
                 raise ParseError(first_token, f"No matching #if, etc for #{directive}")
-            parent = self.ifstack.pop()
+            parent = self.pop_conditional()
             if parent.was_true:
                 is_true = False
             elif directive == 'else':
                 is_true = True
             else:
                 assert directive == 'elif'
-                is_true = self._evaluate_if(directive, tokens[2:])
+                is_true = self._evaluate_conditional_expr(tokens)
             self.push_conditional(ConditionalFrame(
                 token=first_token,
                 directive=directive,
@@ -766,7 +919,7 @@ class Preprocessor:
         elif directive == 'endif':
             if not self.ifstack:
                 raise ParseError(first_token, f"No matching #if, etc for #{directive}")
-            self.ifstack.pop()
+            parent = self.pop_conditional()
         else:
             # We should never get here
             raise ParseError(first_token, f"No implementation for #{directive}")
@@ -882,7 +1035,7 @@ class Preprocessor:
                 # So, we do some checks, and also potentially yield tokens, e.g.
                 # if we were parsing a potential macro call, and now discover
                 # that it is in fact an object-like macro reference.
-                yield from self.finish()
+                yield from self.finish_expand()
         finally:
             if self.add_debug_nodes and expand_msg is not None:
                 yield Token.from_parents((expand_token,), 'DEBUG', f"END: {expand_msg}")
