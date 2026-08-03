@@ -25,7 +25,38 @@ from loosey.pplex import (
     tokenize_file,
     to_string_literal,
 )
+from loosey.ppexpr import eval_pp_expr
 from loosey.recursion import debug_recursion, debug_recursion_log
+
+
+class ConditionalFrame(NamedTuple):
+    # The '#' token
+    token: Token
+
+    # The value of the token following the '#', e.g. 'if', 'ifdef', 'else', etc
+    directive: str
+
+    # Whether the condition evaluated to something truthy
+    was_true: bool
+
+    # The #if, #elif, etc for the current #elif, #else, etc.
+    # *NOT* the parent frame in terms of nesting!..
+    # So, in this example:
+    #
+    #   #if A
+    #     #if B
+    #     #elif C
+    #     #else D
+    #     #endif
+    #   #endif
+    #
+    # ...it's the case that:
+    #
+    #   B's parent is None (not A!)
+    #   C's parent is B
+    #   D's parent is C
+    #
+    parent: Optional['ConditionalFrame'] = None
 
 
 class Macro(NamedTuple):
@@ -501,6 +532,14 @@ class Preprocessor:
         # will be non-None
         self.macro_call_parser: Optional[MacroCallParser] = None
 
+        self.ifstack: list[ConditionalFrame] = []
+
+        # If non-zero, we are inside an #if, #ifdef, etc whose condition was
+        # false, so we should ignore all lines except #else, #endif, etc.
+        self.skip_depth: int = 0
+
+        self.nonempty_line_count: int = 0
+
     def create_child(self, **kwargs) -> 'Preprocessor':
         for k in self.SHARED_ATTRS:
             if k not in kwargs:
@@ -511,6 +550,10 @@ class Preprocessor:
     def finish(self) -> Iterator[Token]:
         """To be called when there are no more tokens to be processed, e.g.
         end of file"""
+        if self.ifstack:
+            frame = self.ifstack[-1]
+            self.ifstack.clear()
+            raise ParseError(frame.token, f"Unterminated #{frame.directive}")
         call_parser = self.macro_call_parser
         if call_parser is not None:
             if call_parser.finish() is NO_CALL:
@@ -552,13 +595,40 @@ class Preprocessor:
 
         # Strip out comments
         tokens = [token for token in line if token.toktype != 'COMMENT']
+
+        # Ignore empty lines
         if not tokens:
             return
+        elif len(tokens) == 1 and tokens[0].value == '#':
+            # A '#' on a line by itself must be silently eaten.
+            # https://gcc.gnu.org/onlinedocs/cpp/Other-Directives.html
+            #
+            #   The null directive consists of a ‘#’ followed by a
+            #   newline, with only whitespace (including comments) in
+            #   between.
+            #   A null directive is understood as a preprocessing
+            #   directive but has no effect on the preprocessor output.
+            #
+            return
+
+        # NOTE:
+        # We could probably optimize "header guards" at some point, i.e. files
+        # with this structure:
+        #
+        #   #ifdef NAME / #define NAME / ...rest of file... / #endif
+        #
+        # ...but it's actually somewhat complicated to detect: we need to make
+        # sure that the same #ifdef at the top of the file matches the #endif
+        # at the bottom.
+        self.nonempty_line_count += 1
 
         # Process directives, if any
         first_token = tokens[0]
         if first_token.toktype == 'INCLUDE':
             # Handle the #import directive
+            if self.skip_depth > 0:
+                # We're inside an #if, #ifdef, etc whose condition was false
+                return
             if len(tokens) > 1:
                 raise ParseError(tokens[1], "Extra tokens after directive arguments")
             match = INCLUDE_REGEX.fullmatch(first_token.value)
@@ -567,20 +637,25 @@ class Preprocessor:
             filename = filespec[1:-1]
             yield from self.include(filename, is_system, first_token)
         elif first_token.value == '#':
-            if len(tokens) == 1:
-                # A '#' on a line by itself must be silently eaten.
-                # https://gcc.gnu.org/onlinedocs/cpp/Other-Directives.html
-                #
-                #   The null directive consists of a ‘#’ followed by a
-                #   newline, with only whitespace (including comments) in
-                #   between.
-                #   A null directive is understood as a preprocessing
-                #   directive but has no effect on the preprocessor output.
-                #
-                return
             # Handle preprocessor directives other than #import
             directive = tokens[1].value
-            if directive == 'define':
+
+            if self.skip_depth > 0:
+                # We're inside an #if, #ifdef, etc whose condition was false
+                if directive in ('if', 'ifdef', 'ifndef'):
+                    self.skip_depth += 1
+                elif directive == 'endif':
+                    self.skip_depth -= 1
+                elif directive in ('elif', 'else'):
+                    if self.skip_depth == 1:
+                        # The if-branch we were in is done, now we need
+                        # to handle its else-branch
+                        self.skip_depth = 0
+
+            if self.skip_depth > 0:
+                # We're inside an #if, #ifdef, etc whose condition was false
+                pass
+            elif directive == 'define':
                 self._process_define_directive(tokens)
             elif directive == 'undef':
                 if len(tokens) < 3 or tokens[2].toktype != 'IDENTIFIER':
@@ -594,7 +669,7 @@ class Preprocessor:
             elif directive == 'error':
                 raise ParseError(first_token, ' '.join(token.value for token in tokens[2:]))
             elif directive in ('if', 'ifdef', 'ifndef', 'elif', 'else', 'endif'):
-                self.warn(first_token, f"TODO: implement #{directive}")
+                self._handle_conditional(tokens)
             elif directive in ('pragma', 'line'):
                 self.warn(first_token, f"Ignoring #{directive}")
             else:
@@ -604,8 +679,12 @@ class Preprocessor:
             # Return the tokens, with any macros expanded.
             # We pass finish=False, because this is only one line, not yet
             # the end-of-file.
+            if self.skip_depth > 0:
+                # We're inside an #if, #ifdef, etc whose condition was false
+                return
             yield from self.expand(tokens, finish=False)
 
+    @debug_recursion()
     def include(self, filename: str, is_system: bool = False, token: Token = None) -> Iterator[Token]:
         if is_system:
             for sys_dir in self.sys_dirs:
@@ -625,9 +704,72 @@ class Preprocessor:
             local_or_sys = 'system' if is_system else 'local'
             self.warn(token, f"File not found for {local_or_sys} include: {filename!r}")
             return
-        lines = tokenize_file(filepath)
-        sub_pp = self.create_child()
-        yield from sub_pp.process(lines)
+        else:
+            # Process the file with a "child" preprocessor, which shares a
+            # lot of stuff with its parent (e.g. macros), but doesn't share
+            # other things (e.g. the "ifstack")
+            lines = tokenize_file(filepath)
+            child_pp = self.create_child()
+            yield from child_pp.process(lines)
+
+    @debug_recursion()
+    def _evaluate_if(self, conditional: str, tokens: list[Token]) -> bool:
+        # TODO: handle the 'defined' operator
+        value = eval_pp_expr(tokens)
+        return bool(value)
+
+    def push_conditional(self, frame: ConditionalFrame):
+        if not frame.was_true:
+            self.skip_depth += 1
+        self.ifstack.append(frame)
+
+    @debug_recursion()
+    def _handle_conditional(self, tokens: list[Token]):
+        first_token = tokens[0]
+        directive = tokens[1].value
+        if directive in 'if':
+            is_true = self._evaluate_if(directive, tokens[2:])
+            self.push_conditional(ConditionalFrame(
+                token=first_token,
+                directive=directive,
+                was_true=is_true,
+            ))
+        elif directive in ('ifdef', 'ifndef'):
+            if len(tokens) > 3 or tokens[2].toktype != 'IDENTIFIER':
+                raise ParseError(first_token, f"Expected a single macro name after #{directive}")
+            name = tokens[2].value
+            is_true = name in self.macros
+            if directive == 'ifndef':
+                is_true = not is_true
+            self.push_conditional(ConditionalFrame(
+                token=first_token,
+                directive=directive,
+                was_true=is_true,
+            ))
+        elif directive in ('elif', 'else'):
+            if not self.ifstack:
+                raise ParseError(first_token, f"No matching #if, etc for #{directive}")
+            parent = self.ifstack.pop()
+            if parent.was_true:
+                is_true = False
+            elif directive == 'else':
+                is_true = True
+            else:
+                assert directive == 'elif'
+                is_true = self._evaluate_if(directive, tokens[2:])
+            self.push_conditional(ConditionalFrame(
+                token=first_token,
+                directive=directive,
+                was_true=is_true,
+                parent=parent
+            ))
+        elif directive == 'endif':
+            if not self.ifstack:
+                raise ParseError(first_token, f"No matching #if, etc for #{directive}")
+            self.ifstack.pop()
+        else:
+            # We should never get here
+            raise ParseError(first_token, f"No implementation for #{directive}")
 
     @debug_recursion()
     def _process_define_directive(self, tokens: list[Token]):

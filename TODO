@@ -40,13 +40,7 @@
 
     [X] Handle macro calls across multiple lines
 
-    [X] Handle #include
-
-    [ ] Handle #if and friends
-
-    [ ] Handle # (stringization) and ## (pasting) operators
-
-    [ ] FIGURE OUT HOW TO TEST OUR PP VS GNU'S (AND/OR CLANG'S)
+    [X] FIGURE OUT HOW TO TEST OUR PP VS GNU'S (AND/OR CLANG'S)
         ...AFAICT, there is no way to get clang or cpp to output a single
         token per line.
         So, in order to do a proper comparison, we would need to... output
@@ -61,7 +55,15 @@
             #################
             [ [ 1 ] ]
 
-        See: pptest.sh
+        See: pptests.sh
+
+    [X] Handle #include
+
+    [X] Handle #if and friends
+
+    [ ] Handle `#if defined`
+
+    [ ] Handle # (stringization) and ## (pasting) operators
 
     [ ] SUPPORT BACKSLASH-NEWLINE IN THE MIDDLE OF A TOKEN?!?!?!
         We could probably do it. It's dumb, but then we could maybe use

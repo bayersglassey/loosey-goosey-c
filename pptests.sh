@@ -57,9 +57,12 @@ if test "$just_input" = true; then
     exit 0
 fi
 
+n_files=0
 for file in $files; do
+    : $(( n_files++ ))
+    echo
     echo "================================================================"
-    echo "=== Testing: $file"
+    echo "=== Testing file $n_files: $file"
     echo "=== Input:"
     input "$file"
 
@@ -82,3 +85,7 @@ for file in $files; do
         exit 1
     fi
 done
+
+echo
+echo "================================================================"
+echo "=== $n_files/$n_files FILES OK"

@@ -260,22 +260,22 @@ def eval_pp_expr(tokens: list[Token] | str) -> int:
         >>> eval_pp_expr('* 2')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: * 2
 
         >>> eval_pp_expr('2 *')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: 2 *
 
         >>> eval_pp_expr('(')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: (
 
         >>> eval_pp_expr(')')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: )
 
     """
     if isinstance(tokens, str):
@@ -292,5 +292,6 @@ def eval_pp_expr(tokens: list[Token] | str) -> int:
         #   $ echo -e '#if ++x\nOK\n#endif' | cpp -P
         #   <stdin>:1:5: error: token "++" is not valid in preprocessor expressions
         #
-        raise ParseError(first_token, "Couldn't parse as preprocessor expression")
+        tokens_s = ' '.join(token.value for token in tokens)
+        raise ParseError(first_token, f"Couldn't parse as preprocessor expression: {tokens_s}")
     return eval_match(match)
