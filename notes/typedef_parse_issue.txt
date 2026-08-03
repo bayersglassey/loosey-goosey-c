@@ -1,0 +1,96 @@
+
+Figure out how to deal with the "lexer hack", i.e. the case where we
+could have a multiplication or a declaration:
+
+    A * B;
+
+See also: https://en.wikipedia.org/wiki/Lexer_hack
+
+...but FWIW, I think we can elegantly solve this by preferring
+declaration over multiplication, no?..
+Because like, who'se gonna do a multiplication at top-level.
+We can just "disallow" that.
+...hmmmm but what about this:
+
+    (A)(B)
+
+...is that a function call or a cast? Shewt.
+So... I think we're stuck with two options:
+1. Parser must return all possible parse trees, and we decide which
+   to use later on, when executing code
+2. Just know beforehand which tokens are type names & which aren't
+
+...and I think the second option is by *far* the better one.
+But we also want to avoid backtracking, so in order for the second
+option to work well, I believe we want to make sure the grammar
+always checks a given token for TYPE_NAME before it checks it for
+IDENTIFIER?..
+Or do we want to have a VARIABLE_NAME thing as well?..
+
+Note, clang and gcc agree on the following:
+
+    typedef int i;
+
+    int main() {
+        // Fine:
+        i x;
+        int i;
+
+        // NOT OKAY:
+        int i;
+        i x; // expected ';' before 'x'
+
+        return 0;
+    }
+
+...which means that it's okay for a variable to shadow a typedef.
+That is, we need to keep track of which identifiers have been used
+as typedefs *and* as variables.
+That's horrific.
+However, clang and gcc also both agree that this is not okay:
+
+    int i() { return 0; } // 'i' redeclared as different kind of symbol
+
+...maaaaan C is gross.
+
+OMFG BUT ALSO:
+
+    int main() {
+        typedef int i;
+        int i; // 'i' redeclared as different kind of symbol
+        return 0;
+    }
+
+...thus, pycparser's CParser.__init__ has this:
+
+    # Stack of scopes for keeping track of symbols. _scope_stack[-1] is
+    # the current (topmost) scope. Each scope is a dictionary that
+    # specifies whether a name is a type. If _scope_stack[n][name] is
+    # True, 'name' is currently a type in the scope. If it's False,
+    # 'name' is defined in the scope but not as a type (for instance, if we
+    # saw: int name;)
+    # If 'name' is not a key in _scope_stack[n] then 'name' was not defined
+    # in this scope at all.
+    self._scope_stack: list[dict[str, bool]] = [{}]
+
+...that is INSANE.
+So for instance, clang and gcc are fine with this (hiding the typedef
+in its own block):
+
+    int main() {
+        { typedef int i; }
+        int i;
+        { typedef int i; }
+        return 0;
+    }
+
+FWIW, pycparser just pushes/pops scopes on '{'/'}' tokens.
+
+OHHHH dang:
+https://en.cppreference.com/cpp/language/typedef
+...typedef is a *specifier*, like static, inline, extern, register, etc.
+And you can actually make multiple typedefs at once:
+
+    typedef int i, j, *i_ptr;
+
+Well then.
