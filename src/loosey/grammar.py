@@ -1,8 +1,9 @@
 import re
+from argparse import ArgumentParser
 from typing import NamedTuple, Literal, Sequence, Optional, Union
 from string import ascii_lowercase, ascii_uppercase
 
-from loosey.pplex import Token
+from loosey.pplex import Token, tokenize_file
 
 
 RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|\)[?*]|[a-zA-Z_][a-zA-Z0-9_]*|'[^']+'|.")
@@ -288,11 +289,16 @@ class GrammarParser:
         self.tokens = tokens
         self.verbose = verbose
 
+        self.main_rule_name = next(reversed(self.rules), None)
         self.match_depth = 0
-
         self.match_cache: dict[ParseMatchKey, Optional[ParseMatch]] = {}
 
-    def match_rule(self, rule_name: str, token_i: int = 0) -> Optional[ParseMatch]:
+    def match(self) -> Optional[ParseMatch]:
+        if self.main_rule_name is None:
+            raise Exception("No main rule")
+        return self.match_rule(self.main_rule_name, full=True)
+
+    def match_rule(self, rule_name: str, token_i: int = 0, *, full: bool = False) -> Optional[ParseMatch]:
         if self.verbose:
             print('. ' * self.match_depth + f"RULE: {rule_name}")
         rule = self.rules[rule_name]
@@ -301,6 +307,8 @@ class GrammarParser:
             for pattern_i in range(len(rule.patterns)):
                 match = self.match_pattern(rule_name, pattern_i, token_i)
                 if match is not None:
+                    if full and match.token_i + match.n_tokens != len(self.tokens):
+                        return None
                     return match
             return None
         finally:
@@ -396,3 +404,35 @@ class GrammarParser:
             n_tokens=token_i - original_token_i,
             children=children,
         ))
+
+
+def main():
+    parser = ArgumentParser()
+    parser.add_argument('-g', '--grammar', default='src/loosey/data/grammar.txt')
+    parser.add_argument('-p', '--print-grammar', default=False, action='store_true')
+    parser.add_argument('-f', '--filename', default='-')
+    parser.add_argument('-r', '--rule-name')
+    parser.add_argument('--partial', default=False, action='store_true')
+    parser.add_argument('-v', '--verbose', default=False, action='store_true')
+    args = parser.parse_args()
+
+    grammar_filename = args.grammar
+    rules = parse_rules_from_file(grammar_filename)
+    if args.print_grammar:
+        for name, rule in rules.items():
+            rule.pprint()
+        return
+
+    filename = args.filename
+    tokens = [token for line in tokenize_file(filename) for token in line]
+    parser = GrammarParser(rules, tokens, verbose=args.verbose)
+    rule_name = args.rule_name or parser.main_rule_name
+    match = parser.match_rule(rule_name, full=not args.partial)
+    if match is None:
+        print("No match!")
+    else:
+        match.pprint()
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,31 @@
+
+number
+    | NUMBER
+    | '-' number
+    ;
+
+key
+    | STRING
+    ;
+
+kvpair
+    | key ':' value
+    ;
+
+array
+    | '[' ( value ( ',' value )* )? ']'
+    ;
+
+object
+    | '{' ( kvpair ( ',' kvpair )* )? '}'
+    ;
+
+value
+    | 'null'
+    | 'true'
+    | 'false'
+    | number
+    | STRING
+    | array
+    | object
+    ;
