@@ -65,8 +65,14 @@
 
     [ ] Handle # (stringization) and ## (pasting) operators
 
+    [ ] Fix our handling of includes!..
+        See: notes/includes.txt
+
     [ ] SUPPORT BACKSLASH-NEWLINE IN THE MIDDLE OF A TOKEN?!?!?!
         We could probably do it. It's dumb, but then we could maybe use
         obfuscated C programs as test input, for fun.
 
         If we end up supporting it, make sure to update docs/preprocessor.md
+
+    [ ] Consider looking at the GNGU cpp options & implementing some:
+        https://gcc.gnu.org/onlinedocs/cpp/Invocation.html

@@ -1,0 +1,66 @@
+
+Fix our handling of includes!..
+E.g. /home/bag/repos/linux/net/core/dev.h does this:
+
+    #include <linux/cleanup.h>
+    #include <linux/types.h>
+    #include <linux/rwsem.h>
+    #include <linux/netdevice.h>
+    #include <net/netdev_lock.h>
+
+...but it lives inside linux/net/, soooo how is it expecting to
+resolve those filenames exactly?..
+https://gcc.gnu.org/onlinedocs/cpp/Include-Syntax.html
+
+    #include <file>
+    This variant is used for system header files.
+    It searches for a file named file in a standard list of system
+    directories.
+     You can prepend directories to this list with the -I option.
+
+    #include "file"
+    This variant is used for header files of your own program.
+    It searches for a file named file first in the directory
+    containing the current file, then in the quote directories and
+    then the same directories used for <file>.
+    You can prepend directories to the list of quote directories
+    with the -iquote option.
+
+Where is my GCC currently looking?..
+https://gcc.gnu.org/onlinedocs/cpp/Search-Path.html
+...suggests looking at the output of `cpp -v /dev/null -o /dev/null`,
+which for me, includes:
+
+    #include "..." search starts here:
+    #include <...> search starts here:
+     /usr/lib/gcc/x86_64-linux-gnu/13/include
+     /usr/local/include
+     /usr/include/x86_64-linux-gnu
+     /usr/include
+
+Also, I believe #include <...> is not supposed to be tokenized in
+a special way?..
+See: https://gcc.gnu.org/onlinedocs/cpp/Computed-Includes.html
+
+    If the first non-whitespace character after '#include' is not '"'
+    or '<', then the entire line is macro-expanded like running text
+    would be.
+
+    ...etc...
+
+    If the line expands to a token stream beginning with a '<' token
+    and including a '>' token, then the tokens between the '<' and the
+    first '>' are combined to form the filename to be included.
+    Any whitespace between tokens is reduced to a single space; then
+    any space after the initial '<' is retained, but a trailing space
+    before the closing '>' is ignored.
+
+...HOWEVER,
+https://gcc.gnu.org/onlinedocs/cpp/Include-Syntax.html
+
+    The argument of ‘#include’, whether delimited with quote marks or
+    angle brackets, behaves like a string constant in that comments
+    are not recognized, and macro names are not expanded.
+    Thus, #include <x/*y> specifies inclusion of a system header file
+    named x/*y.
+
