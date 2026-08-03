@@ -284,10 +284,14 @@ class GrammarParser:
             tokens: Sequence[Token],
             *,
             verbose: bool = False,
+            max_match_depth: Optional[int] = None,
+            squash_children: bool = False,
             ):
         self.rules = rules
         self.tokens = tokens
         self.verbose = verbose
+        self.max_match_depth = max_match_depth
+        self.squash_children = squash_children
 
         self.main_rule_name = next(reversed(self.rules), None)
         self.match_depth = 0
@@ -298,11 +302,16 @@ class GrammarParser:
             raise Exception("No main rule")
         return self.match_rule(self.main_rule_name, full=True)
 
+    def increase_match_depth(self):
+        self.match_depth += 1
+        if self.max_match_depth is not None and self.match_depth >= self.max_match_depth:
+            raise Exception(f"Exceeded max match depth: {self.max_match_depth}")
+
     def match_rule(self, rule_name: str, token_i: int = 0, *, full: bool = False) -> Optional[ParseMatch]:
         if self.verbose:
             print('. ' * self.match_depth + f"RULE: {rule_name}")
         rule = self.rules[rule_name]
-        self.match_depth += 1
+        self.increase_match_depth()
         try:
             for pattern_i in range(len(rule.patterns)):
                 match = self.match_pattern(rule_name, pattern_i, token_i)
@@ -337,7 +346,7 @@ class GrammarParser:
 
         def match_subpattern(subpattern: GrammarPattern) -> bool:
             nonlocal token_i
-            self.match_depth += 1
+            self.increase_match_depth()
             try:
                 for part_type, part_value in subpattern:
                     if part_type == 'rule':
@@ -396,6 +405,11 @@ class GrammarParser:
 
         if not match_subpattern(pattern):
             return cached(None)
+        if self.squash_children and len(children) == 1:
+            return cached(children[0]._replace(
+                token_i=original_token_i,
+                n_tokens=token_i - original_token_i,
+            ))
         return cached(ParseMatch(
             rule_name=rule_name,
             pattern_i=pattern_i,
@@ -410,9 +424,11 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('-g', '--grammar', default='src/loosey/data/ansi-c-grammar.txt')
     parser.add_argument('-p', '--print-grammar', default=False, action='store_true')
+    parser.add_argument('-m', '--max-match-depth')
     parser.add_argument('-f', '--filename', default='-')
     parser.add_argument('-r', '--rule-name')
     parser.add_argument('--partial', default=False, action='store_true')
+    parser.add_argument('-s', '--squash-children', default=False, action='store_true')
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     args = parser.parse_args()
 
@@ -425,7 +441,11 @@ def main():
 
     filename = args.filename
     tokens = [token for line in tokenize_file(filename) for token in line]
-    parser = GrammarParser(rules, tokens, verbose=args.verbose)
+    parser = GrammarParser(rules, tokens,
+        verbose=args.verbose,
+        max_match_depth=args.max_match_depth,
+        squash_children=args.squash_children,
+    )
     rule_name = args.rule_name or parser.main_rule_name
     match = parser.match_rule(rule_name, full=not args.partial)
     if match is None:
