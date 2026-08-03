@@ -1,24 +1,44 @@
 import re
-from typing import NamedTuple, Literal, Sequence, Optional
+from typing import NamedTuple, Literal, Sequence, Optional, Union
 from string import ascii_lowercase, ascii_uppercase
 
 from loosey.pplex import Token
 
 
-RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|[a-zA-Z_][a-zA-Z0-9_]*|'[^']+'|.")
+RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|\)[?*]|[a-zA-Z_][a-zA-Z0-9_]*|'[^']+'|.")
 NAME_CHARS = ascii_lowercase + '_'
 TOKTYPE_CHARS = ascii_uppercase + '_'
 
 
-GrammarPatternPartType = Literal['rule'] | Literal['toktype'] | Literal['tokvalue']
-GrammarPatternPart = tuple[GrammarPatternPartType, str]
+GrammarPatternPartType = (
+    Literal['rule']
+    | Literal['toktype']
+    | Literal['tokvalue']
+    | Literal['maybe']
+    | Literal['star']
+)
+GrammarPatternPart = tuple[GrammarPatternPartType, Union[str, 'GrammarPattern']]
 GrammarPattern = list[GrammarPatternPart]
 
 
 def pattern_to_string(pattern: GrammarPattern) -> str:
-    return ' '.join(
-        repr(v) if t == 'tokvalue' else v
-        for t, v in pattern)
+    s_parts = []
+    def visit(pattern):
+        for part_type, part_value in pattern:
+            if part_type == 'tokvalue':
+                s_parts.append(repr(part_value))
+            elif part_type == 'maybe':
+                s_parts.append('(')
+                visit(part_value)
+                s_parts.append(')?')
+            elif part_type == 'star':
+                s_parts.append('(')
+                visit(part_value)
+                s_parts.append(')*')
+            else:
+                s_parts.append(part_value)
+    visit(pattern)
+    return ' '.join(s_parts)
 
 
 class GrammarRule(NamedTuple):
@@ -28,8 +48,7 @@ class GrammarRule(NamedTuple):
     def pprint(self):
         print(self.name)
         for i, pattern in enumerate(self.patterns):
-            sep = ':' if i == 0 else '|'
-            print(f'    {sep} ' + pattern_to_string(pattern))
+            print('    | ' + pattern_to_string(pattern))
         print('    ;')
 
 
@@ -45,51 +64,59 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
     """
 
         >>> rules = parse_rules('''
-        ...     # Comment
-        ...     rule1
-        ...       : NUMBER
-        ...       | '(' rule1 ')'
-        ...       ;
-        ...     rule1_list: rule1 | rule1 ',' rule1;
+        ...
+        ...     value
+        ...         | NUMBER
+        ...         | array
+        ...         ;
+        ...
+        ...     array
+        ...         | '[' ( value ( ',' value )* )? ']'
+        ...         ;
+        ...
         ... ''')
 
         >>> for name, rule in rules.items(): rule.pprint()
-        rule1
-            : NUMBER
-            | '(' rule1 ')'
+        value
+            | NUMBER
+            | array
             ;
-        rule1_list
-            : rule1
-            | rule1 ',' rule1
+        array
+            | '[' ( value ( ',' value )* )? ']'
             ;
 
     """
     rules = {}
     rule = None
     pattern = None
+    pattern_stack = None
     row = 1
     col = 1
-    tokens = (match.group() for match in RULE_TOKEN_REGEX.finditer(text))
+
+    def iter_tokens():
+        nonlocal row, col
+        for match in RULE_TOKEN_REGEX.finditer(text):
+            token = match.group()
+            if token[0] in '# \n':
+                # Eat comments & whitespace
+                pass
+            else:
+                yield token
+            if token == '\n':
+                col = 1
+                row += 1
+            else:
+                col += len(token)
 
     def error(msg: str) -> GrammarParseError:
         return GrammarParseError(f"{filename}:{row}:{col}: {msg}")
-    def unexpected() -> GrammarParseError:
+
+    def unexpected(token) -> GrammarParseError:
         raise error(f"Unexpected: {token!r}")
 
-    prev_token = ''
-    for token in tokens:
-        if prev_token == '\n':
-            col = 1
-            row += 1
-        else:
-            col += len(prev_token)
-        prev_token = token
-
+    for token in iter_tokens():
         # Decide what kind of token is is based on first character
         c = token[0]
-        if c in '# \n':
-            # Eat comments & whitespace
-            continue
 
         # POSSIBLE STATES:
         if rule is None:
@@ -100,23 +127,31 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
                     raise error(f"Duplicate definition for rule: {token!r}")
                 rule = rules[token] = GrammarRule(name=token, patterns=[])
             else:
-                raise unexpected()
+                raise unexpected(token)
         elif pattern is None:
-            # In a rule definition, before ':'
-            if c == ':':
+            # In a rule definition, before first pattern
+            if c == '|':
                 # Start parsing patterns for the current rule
                 pattern = []
+                pattern_stack = []
+            elif c == ';':
+                raise error("Rule has no patterns: {rule.name}")
             else:
-                raise unexpected()
+                raise unexpected(token)
         else:
-            # In a rule definition, after ':'
+            # In a pattern definition
             if c == ';':
                 # Finish the current rule definition
+                if pattern_stack:
+                    raise error("Unterminated pattern")
                 rule.patterns.append(pattern)
                 rule = None
                 pattern = None
+                pattern_stack = None
             elif c == '|':
                 # Start a new pattern for current rule
+                if pattern_stack:
+                    raise error("Unterminated pattern")
                 rule.patterns.append(pattern)
                 pattern = []
             elif c == "'":
@@ -125,8 +160,23 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
                 pattern.append(('rule', token))
             elif c in TOKTYPE_CHARS:
                 pattern.append(('toktype', token))
+            elif c == '(':
+                pattern_stack.append(pattern)
+                pattern = []
+            elif c == ')':
+                if token == ')?':
+                    part_type = 'maybe'
+                elif token == ')*':
+                    part_type = 'star'
+                else:
+                    raise unexpected(token)
+                if not pattern_stack:
+                    raise unexpected(token)
+                old_pattern = pattern_stack.pop()
+                old_pattern.append((part_type, pattern))
+                pattern = old_pattern
             else:
-                raise unexpected()
+                raise unexpected(token)
 
     if rule is not None:
         raise error(f"Unterminated rule: {rule.name}")
@@ -167,39 +217,63 @@ class GrammarParser:
     """
 
         >>> rules = parse_rules('''
-        ...     value: NUMBER | array ;
-        ...     array
-        ...         : '[' ']'
-        ...         | '[' value_list ']'
+        ...
+        ...     value
+        ...         | NUMBER
+        ...         | array
         ...         ;
-        ...     value_list: value ',' value_list | value ;
+        ...
+        ...     array
+        ...         | '[' ( value ( ',' value )* )? ']'
+        ...         ;
+        ...
         ... ''')
 
         >>> from loosey.pplex import Lexer
-        >>> tokens = [token for line in Lexer().tokenize('''
-        ...     [1, 2, [], [3, 4]]
-        ... ''') for token in line]
+        >>> def parse(text, rule_name='value', verbose=False):
+        ...     tokens = [token for line in Lexer().tokenize(text)
+        ...         for token in line]
+        ...     parser = GrammarParser(rules, tokens, verbose=verbose)
+        ...     match = parser.match_rule(rule_name)
+        ...     if match is not None:
+        ...         match.pprint()
 
-        >>> parser = GrammarParser(rules, tokens, verbose=False)
+        >>> parse('1')
+        1
 
-        >>> match = parser.match_rule('value')
-        >>> match.pprint()
+        Matching a prefix of the input:
+        >>> parse('1 other stuff')
+        1
+
+        No match:
+        >>> parse('x')
+
+        >>> parse('[]')
+        value
+          [
+
+        >>> parse('[1]')
         value
           array
-            value_list
-              1
-              value_list
+            1
+
+        >>> parse('[1,]')
+
+        >>> parse('[1, 2]')
+        value
+          array
+            1
+            2
+
+        >>> parse('[1, [2, 3], 4]')
+        value
+          array
+            1
+            value
+              array
                 2
-                value_list
-                  value
-                    [
-                  value_list
-                    value
-                      array
-                        value_list
-                          3
-                          value_list
-                            4
+                3
+            4
 
     """
 
@@ -220,7 +294,7 @@ class GrammarParser:
 
     def match_rule(self, rule_name: str, token_i: int = 0) -> Optional[ParseMatch]:
         if self.verbose:
-            print('  ' * self.match_depth + f"RULE: {rule_name}")
+            print('. ' * self.match_depth + f"RULE: {rule_name}")
         rule = self.rules[rule_name]
         self.match_depth += 1
         try:
@@ -236,11 +310,11 @@ class GrammarParser:
         rule = self.rules[rule_name]
         pattern = rule.patterns[pattern_i]
         if self.verbose:
-            print('  ' * self.match_depth + f"PATTERN {pattern_i}: {pattern_to_string(pattern)}")
+            print('. ' * self.match_depth + f"PATTERN {pattern_i}: {pattern_to_string(pattern)}")
         cache_key = (rule_name, pattern_i, token_i)
         if cache_key in self.match_cache:
             if self.verbose:
-                print('  ' * self.match_depth + "...FOUND IN CACHE!")
+                print('. ' * self.match_depth + "FOUND IN CACHE!")
             return self.match_cache[cache_key]
 
         def cached(value):
@@ -253,43 +327,72 @@ class GrammarParser:
         original_token_i = token_i
         children = []
 
-        self.match_depth += 1
-        try:
-            for part_type, part_value in pattern:
-                if part_type == 'rule':
-                    match = self.match_rule(part_value, token_i)
-                    if match is None:
-                        return cached(None)
-                    assert match.token_i == token_i
-                    token_i = token_i + match.n_tokens
-                    children.append(match)
-                else:
-                    if token_i >= len(self.tokens):
-                        return cached(None)
-                    token = self.tokens[token_i]
-                    if self.verbose:
-                        print('  ' * self.match_depth + f"TOKEN: {token.value!r}")
-                    if part_type == 'toktype':
-                        if token.toktype != part_value:
-                            return cached(None)
-                        token_i += 1
-                    elif part_type == 'tokvalue':
-                        if token.value != part_value:
-                            return cached(None)
-                        token_i += 1
+        def match_subpattern(subpattern: GrammarPattern) -> bool:
+            nonlocal token_i
+            self.match_depth += 1
+            try:
+                for part_type, part_value in subpattern:
+                    if part_type == 'rule':
+                        match = self.match_rule(part_value, token_i)
+                        if match is None:
+                            if self.verbose:
+                                print('. ' * self.match_depth + "NOT MATCH")
+                            return False
+                        assert match.token_i == token_i
+                        token_i = token_i + match.n_tokens
+                        children.append(match)
+                    elif part_type == 'maybe':
+                        # Zero or one matches of subpattern
+                        if self.verbose:
+                            print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {pattern_to_string(part_value)}")
+                        old_token_i = token_i
+                        if not match_subpattern(part_value):
+                            token_i = old_token_i
+                    elif part_type == 'star':
+                        # Zero or more matches of subpattern
+                        if self.verbose:
+                            print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {pattern_to_string(part_value)}")
+                        old_token_i = token_i
+                        while match_subpattern(part_value):
+                            old_token_i = token_i
+                        token_i = old_token_i
                     else:
-                        # We should never get here...
-                        raise Exception(f"Unrecognized pattern part type: {part_type!r}")
+                        if token_i >= len(self.tokens):
+                            if self.verbose:
+                                print('. ' * self.match_depth + "END OF INPUT")
+                            return False
+                        token = self.tokens[token_i]
+                        if self.verbose:
+                            print('. ' * self.match_depth + f"TOKEN: {token.value!r}")
+                        if part_type == 'toktype':
+                            if token.toktype != part_value:
+                                if self.verbose:
+                                    print('. ' * self.match_depth + "NOT MATCH")
+                                return False
+                            token_i += 1
+                        elif part_type == 'tokvalue':
+                            if token.value != part_value:
+                                if self.verbose:
+                                    print('. ' * self.match_depth + "NOT MATCH")
+                                return False
+                            token_i += 1
+                        else:
+                            # We should never get here...
+                            raise Exception(f"Unrecognized pattern part type: {part_type!r}")
+                if self.verbose:
+                    thing = 'RULE' if subpattern is pattern else 'SUB-PATTERN'
+                    print('. ' * self.match_depth + f"{thing} MATCHED!")
+                return True
+            finally:
+                self.match_depth -= 1
 
-            if self.verbose:
-                print('  ' * (self.match_depth - 1) + "...MATCHED!")
-            return cached(ParseMatch(
-                rule_name=rule_name,
-                pattern_i=pattern_i,
-                token=self.tokens[original_token_i],
-                token_i=original_token_i,
-                n_tokens=token_i - original_token_i,
-                children=children,
-            ))
-        finally:
-            self.match_depth -= 1
+        if not match_subpattern(pattern):
+            return cached(None)
+        return cached(ParseMatch(
+            rule_name=rule_name,
+            pattern_i=pattern_i,
+            token=self.tokens[original_token_i],
+            token_i=original_token_i,
+            n_tokens=token_i - original_token_i,
+            children=children,
+        ))
