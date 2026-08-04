@@ -177,42 +177,6 @@ class ParseError(Exception):
         self.token = token
 
 
-KEYWORDS = frozenset((
-    'auto',
-    'break',
-    'case',
-    'char',
-    'const',
-    'continue',
-    'default',
-    'do',
-    'double',
-    'else',
-    'enum',
-    'extern',
-    'float',
-    'for',
-    'goto',
-    'if',
-    'int',
-    'long',
-    'register',
-    'return',
-    'short',
-    'signed',
-    'sizeof',
-    'static',
-    'struct',
-    'switch',
-    'typedef',
-    'union',
-    'unsigned',
-    'void',
-    'volatile',
-    'while',
-))
-
-
 # NOTE: the order matters, e.g. '++' must come before '+'
 # See:
 # * notes/ansi.c.grammar.l
