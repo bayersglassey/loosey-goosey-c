@@ -252,6 +252,27 @@ class ParseMatch(NamedTuple):
         else:
             print(prefix + self.token.value)
 
+    def find(self, spec: str) -> Optional['ParseMatch']:
+        matches = self.findall(spec)
+        return matches[0] if matches else None
+
+    def findall(self, spec: str) -> list['ParseMatch']:
+        parts = [] if not spec else spec.split('.')
+        matches = [self]
+        for part in parts:
+            if ':' in part:
+                rule_name, pattern_name = part.split(':', 1)
+            else:
+                rule_name = part
+                pattern_name = None
+            old_matches = matches
+            matches = []
+            for match in old_matches:
+                for child in match.children:
+                    if child.rule_name == rule_name and child.pattern_name == pattern_name:
+                        matches.append(child)
+        return matches
+
 
 # Internal type used by GrammarParser.match_pattern.
 # Represents a tuple (children, token_i)
@@ -277,42 +298,45 @@ class GrammarParser:
 
         >>> def parse(text, rule_name='value', **kwargs):
         ...     parser = GrammarParser(rules, text, **kwargs)
-        ...     match = parser.match_rule(rule_name)
+        ...     return parser.match_rule(rule_name)
+
+        >>> def test(text, **kwargs):
+        ...     match = parse(text, **kwargs)
         ...     if match is not None:
         ...         match.pprint()
 
-        >>> parse('1')
+        >>> test('1')
         1
 
-        >>> parse('-1')
+        >>> test('-1')
         negative: value
           1
 
         Matching a prefix of the input:
-        >>> parse('1 other stuff')
+        >>> test('1 other stuff')
         1
 
         No match:
-        >>> parse('x')
+        >>> test('x')
 
-        >>> parse('[]')
+        >>> test('[]')
         value
           [
 
-        >>> parse('[1]')
+        >>> test('[1]')
         value
           array
             1
 
-        >>> parse('[1,]')
+        >>> test('[1,]')
 
-        >>> parse('[1, 2]')
+        >>> test('[1, 2]')
         value
           array
             1
             2
 
-        >>> parse('[1, [2, 3], 4]')
+        >>> test('[1, [2, 3], 4]')
         value
           array
             1
@@ -322,7 +346,7 @@ class GrammarParser:
                 3
             4
 
-        >>> parse('[1, [2, -3], -4, []]', squash_children=True)
+        >>> test('[1, [2, -3], -4, []]', squash_children=True)
         array
           1
           array
@@ -332,6 +356,34 @@ class GrammarParser:
           negative: value
             4
           [
+
+    Using match.find() and match.findall():
+
+        >>> match = parse('[1, [2, 3], 4]')
+        >>> match.pprint()
+        value
+          array
+            1
+            value
+              array
+                2
+                3
+            4
+
+        >>> match.find('array.array')
+
+        >>> match.find('array.value.array').pprint()
+        array
+          2
+          3
+
+        >>> for child in match.findall('array.value'): child.pprint()
+        1
+        value
+          array
+            2
+            3
+        4
 
     """
 
