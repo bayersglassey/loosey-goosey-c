@@ -34,23 +34,18 @@ And you should be able to define missing functions and things quickly in
 Python, so you can re-run the thing you were actually interested in, and have
 it succeed this time.
 
-In order for this to work, we're not gonna worry too much about e.g. whether
-`f(x)` is a preprocessor macro or a function call.
-And we're not gonna worry too much about whether every statement ends in a
-semicolon, because maybe `MY_MACRO(X, Y)` is supposed to expand to a bunch of
-statements with semicolons already at the end... but we don't care if we've
-actually got the macro definition, we'll just call that a "function call",
-and if the function's defined in Python, so be it!
-
-So, we're going to support some invalid C code, and we're probably also
-going to fail on some valid C code, because C allows for a lot of weird
-stuff which is handy if you're writing for the Obfuscated C Contest, but
-I don't think we need to worry about if we're just trying to e.g. play with
-nicely formatted stuff we find in the Linux kernel.
-
 Last thing in this rationale, I'm going to breathe to you a secret word...
 doctests.
 Imagine doctests for your C code.
+
+
+## Existing C interpreters
+
+Here are some projects I've played with or looked at, but didn't quite get
+what I needed from:
+
+* clang-repl: https://clang.llvm.org/docs/ClangRepl.html
+* pycparser: https://github.com/eliben/pycparser
 
 
 ## Installation
