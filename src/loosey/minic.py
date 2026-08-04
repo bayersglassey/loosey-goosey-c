@@ -1,4 +1,4 @@
-from typing import NamedTuple, Any
+from typing import Any
 from contextlib import contextmanager
 
 from loosey import get_data_filename
@@ -7,16 +7,23 @@ from loosey.pplex import Token, ParseError
 from loosey.pp import GrammarEvaluatorWithPreprocessor
 
 
-class Function(NamedTuple):
-    name: str
-    params: list[str]
-    body: ParseMatch
-
+GRAMMAR_FILENAME = get_data_filename('ansi-c-grammar.txt')
 
 Value = Any
 
 
-GRAMMAR_FILENAME = get_data_filename('ansi-c-grammar.txt')
+class Function:
+    def __init__(self, name: str, params: list[str], body: ParseMatch, minic: 'MiniC'):
+        self.name = name
+        self.params = params
+        self.body = body
+        self.minic = minic
+
+    def __repr__(self):
+        return f"{self.name}({', '.join(self.params)})"
+
+    def __call__(self, *args) -> Value:
+        return self.minic.call_func(self, *args)
 
 
 def _parse_number(token: Token) -> int | float:
@@ -49,9 +56,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         >>> minic = MiniC()
 
-        >>> add = minic.eval('int add(int x, int y) { return x + y; }')
-        >>> add.name, add.params
-        ('add', ['x', 'y'])
+        >>> minic.eval('int add(int x, int y) { return x + y; }')
+        add(x, y)
 
         >>> minic.eval('int x = 1, y = 2;')
         {'x': 1, 'y': 2}
@@ -62,8 +68,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         >>> minic.eval('int total = add(2, 3);')
         {'total': 5}
 
-        >>> list(minic.globals)
-        ['add', 'x', 'y', 'total']
+        >>> minic.globals
+        {'add': add(x, y), 'x': 1, 'y': 2, 'total': 5}
 
         We can use Python values directly!
         >>> minic.globals['x'] = 99
@@ -108,7 +114,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         params = [child.token.value for child in declarator.findall(
             'params:direct_operator parameter_list parameter_declaration declare:.')]
         body = match.find('block:compound_statement')
-        function = Function(name, params, body)
+        function = Function(name, params, body, self)
         self.globals[name] = function
         return function
 
@@ -118,8 +124,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         for child in match.findall('init_declarator'):
             name = child.find('declare:.').token.value
             value = self.on(child.children[-1])
+            self.set_var(name, value)
             values[name] = value
-        self.set_vars(values)
         return values
 
     def on_postfix_expression(self, match: ParseMatch) -> Value:
@@ -128,10 +134,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         for child in children:
             if child.pattern_name == 'call':
                 param_values = [self.on(subchild) for subchild in child.children]
-                if callable(value):
-                    value = value(*param_values)
-                elif isinstance(value, Function):
-                    value = self.call_func(value, *param_values)
+                value = value(*param_values)
             else:
                 raise ParseError(child.token, f"Dunno how to eval {child.spec}")
         return value
