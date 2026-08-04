@@ -1,5 +1,5 @@
 # Modified from this ANSI C yacc grammmar file I got from the Internet:
-# https:#www.lysator.liu.se/c/ANSI-C-grammar-y.html
+# https://www.lysator.liu.se/c/ANSI-C-grammar-y.html
 #
 #     In 1985, Jeff Lee published his Yacc grammar (which is accompanied by a
 #     matching Lex specification) for the April 30, 1985 draft version of the
