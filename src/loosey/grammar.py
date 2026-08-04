@@ -8,8 +8,8 @@ from functools import cached_property
 from loosey.pplex import Token, Lexer, ParseError, tokenize_file
 
 
-RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|\)[?*]|[a-zA-Z_][a-zA-Z0-9_]*|'[^']+'|.")
-NAME_CHARS = ascii_lowercase + '_'
+RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|\)[?*]|[a-z][a-z0-9_]*:?|[A-Z][A-Z0-9_]*|'[^']+'|.")
+RULE_NAME_CHARS = ascii_lowercase + '_'
 TOKTYPE_CHARS = ascii_uppercase + '_'
 
 
@@ -20,14 +20,21 @@ GrammarPatternPartType = (
     | Literal['maybe']
     | Literal['star']
 )
+
+# Part consists of: (part_type, part_value)
 GrammarPatternPart = tuple[GrammarPatternPartType, Union[str, 'GrammarPattern']]
-GrammarPattern = list[GrammarPatternPart]
+
+class GrammarPattern(NamedTuple):
+    name: Optional[str]
+    parts: list[GrammarPatternPart]
 
 
 def pattern_to_string(pattern: GrammarPattern) -> str:
     s_parts = []
+    if pattern.name:
+        s_parts.append(f'{pattern.name}:')
     def visit(pattern):
-        for part_type, part_value in pattern:
+        for part_type, part_value in pattern.parts:
             if part_type == 'tokvalue':
                 s_parts.append(repr(part_value))
             elif part_type == 'maybe':
@@ -70,6 +77,7 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
         ...
         ...     value
         ...         | NUMBER
+        ...         | negative: '-' value
         ...         | array
         ...         ;
         ...
@@ -82,6 +90,7 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
         >>> for name, rule in rules.items(): rule.pprint()
         value
             | NUMBER
+            | negative: '-' value
             | array
             ;
         array
@@ -91,7 +100,8 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
     """
     rules = {}
     rule = None
-    pattern = None
+    pattern_name = None
+    pattern_parts = None
     pattern_stack = None
     row = 1
     col = 1
@@ -124,18 +134,18 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
         # POSSIBLE STATES:
         if rule is None:
             # Not in a rule definition
-            if c in ascii_lowercase:
+            if c in RULE_NAME_CHARS and token[-1] != ':':
                 # Start a new rule definition
                 if token in rules:
                     raise error(f"Duplicate definition for rule: {token!r}")
                 rule = rules[token] = GrammarRule(name=token, patterns=[])
             else:
                 raise unexpected(token)
-        elif pattern is None:
+        elif pattern_parts is None:
             # In a rule definition, before first pattern
             if c == '|':
                 # Start parsing patterns for the current rule
-                pattern = []
+                pattern_parts = []
                 pattern_stack = []
             elif c == ';':
                 raise error("Rule has no patterns: {rule.name}")
@@ -147,25 +157,38 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
                 # Finish the current rule definition
                 if pattern_stack:
                     raise error("Unterminated pattern")
-                rule.patterns.append(pattern)
+                rule.patterns.append(GrammarPattern(
+                    name=pattern_name,
+                    parts=pattern_parts,
+                ))
                 rule = None
-                pattern = None
+                pattern_name = None
+                pattern_parts = None
                 pattern_stack = None
             elif c == '|':
                 # Start a new pattern for current rule
                 if pattern_stack:
                     raise error("Unterminated pattern")
-                rule.patterns.append(pattern)
-                pattern = []
+                rule.patterns.append(GrammarPattern(
+                    name=pattern_name,
+                    parts=pattern_parts,
+                ))
+                pattern_name = None
+                pattern_parts = []
             elif c == "'":
-                pattern.append(('tokvalue', token[1:-1]))
-            elif c in NAME_CHARS:
-                pattern.append(('rule', token))
+                pattern_parts.append(('tokvalue', token[1:-1]))
+            elif c in RULE_NAME_CHARS:
+                if token[-1] == ':':
+                    if pattern_parts or pattern_stack or pattern_name:
+                        raise unexpected(token)
+                    pattern_name = token[:-1]
+                else:
+                    pattern_parts.append(('rule', token))
             elif c in TOKTYPE_CHARS:
-                pattern.append(('toktype', token))
+                pattern_parts.append(('toktype', token))
             elif c == '(':
-                pattern_stack.append(pattern)
-                pattern = []
+                pattern_stack.append(pattern_parts)
+                pattern_parts = []
             elif c == ')':
                 if token == ')?':
                     part_type = 'maybe'
@@ -175,9 +198,13 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
                     raise unexpected(token)
                 if not pattern_stack:
                     raise unexpected(token)
-                old_pattern = pattern_stack.pop()
-                old_pattern.append((part_type, pattern))
-                pattern = old_pattern
+                old_parts = pattern_stack.pop()
+                # NOTE: sub-patterns currently can't have names, just because
+                # it didn't seem that useful, so we're keeping the
+                # pattern-parser simple
+                sub_pattern = GrammarPattern(name=None, parts=pattern_parts)
+                old_parts.append((part_type, sub_pattern))
+                pattern_parts = old_parts
             else:
                 raise unexpected(token)
 
@@ -196,7 +223,7 @@ class ParseMatchKey(NamedTuple):
 class ParseMatch(NamedTuple):
     """When one of a rule's patterns matches, we get a parse match"""
     rule_name: str
-    pattern_i: int
+    pattern_name: Optional[str]
 
     # The token matching the start of the pattern
     token: Token
@@ -215,12 +242,15 @@ class ParseMatch(NamedTuple):
             return self.token.value
 
     def pprint(self, depth=0):
+        prefix = '  ' * depth
+        if self.pattern_name:
+            prefix = f'{prefix}{self.pattern_name}: '
         if self.children:
-            print('  ' * depth + self.rule_name)
+            print(prefix + self.rule_name)
             for child in self.children:
                 child.pprint(depth+1)
         else:
-            print('  ' * depth + self.token.value)
+            print(prefix + self.token.value)
 
 
 # Internal type used by GrammarParser.match_pattern.
@@ -235,6 +265,7 @@ class GrammarParser:
         ...
         ...     value
         ...         | NUMBER
+        ...         | negative: '-' value
         ...         | array
         ...         ;
         ...
@@ -252,6 +283,10 @@ class GrammarParser:
 
         >>> parse('1')
         1
+
+        >>> parse('-1')
+        negative: value
+          1
 
         Matching a prefix of the input:
         >>> parse('1 other stuff')
@@ -287,13 +322,15 @@ class GrammarParser:
                 3
             4
 
-        >>> parse('[1, [2, 3], 4, []]', squash_children=True)
+        >>> parse('[1, [2, -3], -4, []]', squash_children=True)
         array
           1
           array
             2
-            3
-          4
+            negative: value
+              3
+          negative: value
+            4
           [
 
     """
@@ -390,7 +427,7 @@ class GrammarParser:
             children = []
             self.increase_match_depth()
             try:
-                for part_type, part_value in subpattern:
+                for part_type, part_value in subpattern.parts:
                     if part_type == 'rule':
                         # This pattern consists of matching against another
                         # rule
@@ -462,7 +499,11 @@ class GrammarParser:
         children, token_i = result
 
         # Return a match object
-        if self.squash_children and len(children) == 1:
+        if (
+            self.squash_children
+            and len(children) == 1
+            and not pattern.name # don't squash named patterns!
+        ):
             return cached(children[0]._replace(
                 token_i=original_token_i,
                 n_tokens=token_i - original_token_i,
@@ -470,7 +511,7 @@ class GrammarParser:
         else:
             return cached(ParseMatch(
                 rule_name=rule_name,
-                pattern_i=pattern_i,
+                pattern_name=pattern.name,
                 token=self.tokens[original_token_i],
                 token_i=original_token_i,
                 n_tokens=token_i - original_token_i,
@@ -486,6 +527,7 @@ class GrammarEvaluator:
         ...
         ...     value
         ...         | NUMBER
+        ...         | negative: '-' value
         ...         | array
         ...         ;
         ...
@@ -499,6 +541,8 @@ class GrammarEvaluator:
         ...     grammar_rules = rules
         ...     main_rule_name = 'value'
         ...     squash_children = True
+        ...     def on_negative__value(self, match):
+        ...         return -self.on(match.children[0])
         ...     def on_value(self, match):
         ...         return int(match.token.value)
         ...     def on_array(self, match):
@@ -509,11 +553,14 @@ class GrammarEvaluator:
         >>> evaluator.eval('1')
         1
 
+        >>> evaluator.eval('-1')
+        -1
+
         >>> evaluator.eval('[]')
         []
 
-        >>> evaluator.eval('[1, 2, [3, 4]]')
-        [1, 2, [3, 4]]
+        >>> evaluator.eval('[1, 2, [-3, -4]]')
+        [1, 2, [-3, -4]]
 
         >>> evaluator.eval('x y z')
         Traceback (most recent call last):
@@ -529,15 +576,23 @@ class GrammarEvaluator:
     def __init__(self):
         self.validate()
 
+    def get_handler_name(self, rule_name: str, pattern_name: Optional[str] = None) -> str:
+        return (
+            f'on_{pattern_name}__{rule_name}' if pattern_name
+            else f'on_{rule_name}')
+
     def validate(self):
-        missing_rules = []
+        bad_method_names = []
+        possible_method_names = {
+            self.get_handler_name(rule_name, pattern.name)
+            for rule_name, rule in self.grammar_rules.items()
+            for pattern in rule.patterns}
         for attr in dir(self):
             if attr.startswith('on_'):
-                rule_name = attr[len('on_'):]
-                if rule_name not in self.grammar_rules:
-                    missing_rules.append(rule_name)
-        if missing_rules:
-            raise Exception(f"Have 'on_' handler methods for missing rules: {', '.join(missing_rules)}")
+                if attr not in possible_method_names:
+                    bad_method_names.append(attr)
+        if bad_method_names:
+            raise Exception(f"Handler methods for missing rules/patterns: {', '.join(bad_method_names)}")
 
     @cached_property
     def grammar_rules(self) -> dict[str, GrammarRule]:
@@ -546,11 +601,17 @@ class GrammarEvaluator:
             return parse_rules_from_file(self.grammar_filename)
         raise NotImplementedError("To be implemented by subclasses")
 
-    def parse(self, tokens: list[Token] | str, rule_name: Optional[str] = None) -> Optional[ParseMatch]:
+    def coerce_tokens(self, tokens: list[Token] | str) -> list[Token]:
+        # NOTE: subclasses may want to override this property... for instance,
+        # to stick a C preprocessor in front of it ;)
         if isinstance(tokens, str):
             # Support caller passing us a string, handy for doctests
             tokens = [token for line in Lexer().tokenize(tokens)
                 for token in line]
+        return tokens
+
+    def parse(self, tokens: list[Token] | str, rule_name: Optional[str] = None) -> Optional[ParseMatch]:
+        tokens = self.coerce_tokens(tokens)
         parser = GrammarParser(
             self.grammar_rules,
             tokens,
@@ -560,16 +621,13 @@ class GrammarEvaluator:
         return parser.match()
 
     def no_match(self, tokens: list[Token], rule_name: str):
-        # NOTE: subclasses probably want to override this method with custom
+        # NOTE: subclasses may want to override this method with custom
         # error message, etc
         first_token = tokens[0] if tokens else None
         raise ParseError(first_token, f"Couldn't parse as: {rule_name}")
 
     def eval(self, tokens: list[Token] | str, rule_name: Optional[str] = None):
-        if isinstance(tokens, str):
-            # Support caller passing us a string, handy for doctests
-            tokens = [token for line in Lexer().tokenize(tokens)
-                for token in line]
+        tokens = self.coerce_tokens(tokens)
         rule_name = rule_name or self.main_rule_name
         match = self.parse(tokens, rule_name)
         if match is None:
@@ -581,9 +639,10 @@ class GrammarEvaluator:
         raise ParseError(match.token, "Don't know how to evaluate: {match.token.prettystring()}")
 
     def on(self, match: ParseMatch):
-        method = getattr(self, f'on_{match.rule_name}', None)
-        if method is not None:
-            return method(match)
+        handler_name = self.get_handler_name(match.rule_name, match.pattern_name)
+        handler = getattr(self, handler_name, None)
+        if handler is not None:
+            return handler(match)
         else:
             return self.default(match)
 
