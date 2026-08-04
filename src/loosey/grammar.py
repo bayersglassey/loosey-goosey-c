@@ -1,9 +1,11 @@
 import re
+import os
 from argparse import ArgumentParser
 from typing import NamedTuple, Literal, Sequence, Optional, Union
 from string import ascii_lowercase, ascii_uppercase
+from functools import cached_property
 
-from loosey.pplex import Token, tokenize_file
+from loosey.pplex import Token, Lexer, ParseError, tokenize_file
 
 
 RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|\)[?*]|[a-zA-Z_][a-zA-Z0-9_]*|'[^']+'|.")
@@ -237,11 +239,8 @@ class GrammarParser:
         ...
         ... ''')
 
-        >>> from loosey.pplex import Lexer
-        >>> def parse(text, rule_name='value', verbose=False):
-        ...     tokens = [token for line in Lexer().tokenize(text)
-        ...         for token in line]
-        ...     parser = GrammarParser(rules, tokens, verbose=verbose)
+        >>> def parse(text, rule_name='value', **kwargs):
+        ...     parser = GrammarParser(rules, text, **kwargs)
         ...     match = parser.match_rule(rule_name)
         ...     if match is not None:
         ...         match.pprint()
@@ -283,24 +282,44 @@ class GrammarParser:
                 3
             4
 
+        >>> parse('[1, [2, 3], 4, []]', squash_children=True)
+        array
+          1
+          array
+            2
+            3
+          4
+          [
+
     """
 
     def __init__(
             self,
-            rules: dict[str, GrammarRule],
-            tokens: Sequence[Token],
+            rules: dict[str, GrammarRule] | str,
+            tokens: Sequence[Token] | str,
             *,
             verbose: bool = False,
+            main_rule_name: Optional[str] = None,
             max_match_depth: Optional[int] = None,
             squash_children: bool = False,
             ):
+        if isinstance(rules, str):
+            # Support caller passing us text, handy for doctests
+            rules = parse_rules(rules)
+        if isinstance(tokens, str):
+            # Support caller passing us text, handy for doctests
+            tokens = [token for line in Lexer().tokenize(tokens)
+                for token in line]
         self.rules = rules
         self.tokens = tokens
         self.verbose = verbose
         self.max_match_depth = max_match_depth
         self.squash_children = squash_children
 
-        self.main_rule_name = next(reversed(self.rules), None)
+        if main_rule_name is None:
+            main_rule_name = next(reversed(self.rules), None)
+        self.main_rule_name = main_rule_name
+
         self.match_depth = 0
         self.match_cache: dict[ParseMatchKey, Optional[ParseMatch]] = {}
 
@@ -427,9 +446,121 @@ class GrammarParser:
         ))
 
 
+class GrammarEvaluator:
+    """Base class which can be extended to evaluate expressions of a
+    particular grammar.
+
+        >>> rules = parse_rules('''
+        ...
+        ...     value
+        ...         | NUMBER
+        ...         | array
+        ...         ;
+        ...
+        ...     array
+        ...         | '[' ( value ( ',' value )* )? ']'
+        ...         ;
+        ...
+        ... ''')
+
+        >>> class ValueEvaluator(GrammarEvaluator):
+        ...     grammar_rules = rules
+        ...     main_rule_name = 'value'
+        ...     squash_children = True
+        ...     def on_value(self, match):
+        ...         return int(match.token.value)
+        ...     def on_array(self, match):
+        ...         return [self.on(child) for child in match.children]
+        ...     def no_match(self, tokens):
+        ...         s = ' '.join(token.value for token in tokens)
+        ...         raise ParseError(tokens[0], f"Couldn't parse: {s}")
+
+        >>> evaluator = ValueEvaluator()
+
+        >>> evaluator.eval('1')
+        1
+
+        >>> evaluator.eval('[]')
+        []
+
+        >>> evaluator.eval('[1, 2, [3, 4]]')
+        [1, 2, [3, 4]]
+
+        >>> evaluator.eval('x y z')
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse: x y z
+
+    """
+
+    rules_filename: Optional[str] = None
+    main_rule_name: Optional[str] = None
+    squash_children: bool = False
+
+    def __init__(self):
+        self.validate()
+
+    def validate(self):
+        missing_rules = []
+        for attr in dir(self):
+            if attr.startswith('on_'):
+                rule_name = attr[len('on_'):]
+                if rule_name not in self.grammar_rules:
+                    missing_rules.append(rule_name)
+        if missing_rules:
+            raise Exception(f"Have 'on_' handler methods for missing rules: {', '.join(missing_rules)}")
+
+    @cached_property
+    def grammar_rules(self) -> dict[str, GrammarRule]:
+        # NOTE: subclasses may want to override this property
+        if self.rules_filename is not None:
+            return parse_rules_from_file(self.rules_filename)
+        raise NotImplementedError("To be implemented by subclasses")
+
+    def parse(self, tokens: list[Token] | str) -> Optional[ParseMatch]:
+        if isinstance(tokens, str):
+            # Support caller passing us a string, handy for doctests
+            tokens = [token for line in Lexer().tokenize(tokens)
+                for token in line]
+        parser = GrammarParser(
+            self.grammar_rules,
+            tokens,
+            main_rule_name=self.main_rule_name,
+            squash_children=self.squash_children,
+        )
+        return parser.match()
+
+    def no_match(self, tokens: list[Token]):
+        # NOTE: subclasses probably want to override this method with custom
+        # error message, etc
+        first_token = tokens[0] if tokens else None
+        raise ParseError(first_token, "Couldn't parse")
+
+    def eval(self, tokens: list[Token] | str):
+        if isinstance(tokens, str):
+            # Support caller passing us a string, handy for doctests
+            tokens = [token for line in Lexer().tokenize(tokens)
+                for token in line]
+        match = self.parse(tokens)
+        if match is None:
+            self.no_match(tokens)
+        return self.on(match)
+
+    def default(self, match: ParseMatch):
+        # NOTE: subclasses probably want to override this method
+        raise ParseError(match.token, "Don't know how to evaluate: {match.token.prettystring()}")
+
+    def on(self, match: ParseMatch):
+        method = getattr(self, f'on_{match.rule_name}', None)
+        if method is not None:
+            return method(match)
+        else:
+            return self.default(match)
+
+
 def main():
     parser = ArgumentParser()
-    parser.add_argument('-g', '--grammar', default='src/loosey/data/ansi-c-grammar.txt')
+    parser.add_argument('-g', '--grammar')
     parser.add_argument('-p', '--print-grammar', default=False, action='store_true')
     parser.add_argument('-m', '--max-match-depth', type=int)
     parser.add_argument('-f', '--filename', default='-')
@@ -438,6 +569,12 @@ def main():
     parser.add_argument('-s', '--squash-children', default=False, action='store_true')
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     args = parser.parse_args()
+
+    if not args.grammar:
+        print(f"Missing grammar file (-g|--grammar), try one of:")
+        for fname in get_grammar_filenames():
+            print(f" * {fname}")
+        sys.exit(1)
 
     grammar_filename = args.grammar
     rules = parse_rules_from_file(grammar_filename)

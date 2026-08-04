@@ -1,6 +1,5 @@
-import os
-from functools import lru_cache
 
+from loosey import get_data_filename
 from loosey.pplex import (
     Token,
     Lexer,
@@ -8,14 +7,12 @@ from loosey.pplex import (
     from_char_literal,
 )
 from loosey.grammar import (
-    GrammarRule,
-    GrammarParser,
+    GrammarEvaluator,
     ParseMatch,
-    parse_rules_from_file,
 )
 
 
-GRAMMAR_FILENAME = os.path.join(os.path.dirname(__file__), 'data', 'ppexpr-grammar.txt')
+GRAMMAR_FILENAME = get_data_filename('ppexpr-grammar.txt')
 
 
 SINGLE_OPS = {
@@ -27,16 +24,27 @@ SINGLE_OPS = {
 }
 
 
-@lru_cache
-def get_grammar_rules() -> dict[str, GrammarRule]:
-    """The rules for the pp expression grammar"""
-    return parse_rules_from_file(GRAMMAR_FILENAME)
+def _parse_number(token: Token) -> int:
+    text = token.value
+    if '.' in text:
+        raise ParseError(token, f"Floats not allowed in preprocessor expressions: {text!r}")
+    try:
+        if text.startswith('0x'):
+            return int(text[2:], 16)
+        elif len(text) > 1 and text.startswith('0'):
+            return int(text[1:], 8)
+        else:
+            return int(text)
+    except ValueError:
+        raise ParseError(token, f"Couldn't parse as number: {text!r}")
 
 
-def parse_pp_expr(tokens: list[Token] | str) -> ParseMatch:
-    """Parses the given conditional expression into a tree structure
+class ConditionalExpressionEvaluator(GrammarEvaluator):
+    r"""Parses and evaluates C preprocessor conditional expressions
 
-        >>> parse_pp_expr('x < 3? ~!y + 2: 2 * 3 * 4 + 10, 99').pprint()
+        >>> evaluator = ConditionalExpressionEvaluator()
+
+        >>> evaluator.parse('x < 3? ~!y + 2: 2 * 3 * 4 + 10, 99').pprint()
         expression
           conditional_expression
             relational_expression
@@ -61,36 +69,156 @@ def parse_pp_expr(tokens: list[Token] | str) -> ParseMatch:
               10
           99
 
+    Evaluation examples:
+
+        >>> evaluator.eval("1")
+        1
+
+        >>> evaluator.eval("+1")
+        1
+
+        >>> evaluator.eval("-1")
+        -1
+
+        Identifers are all treated as the value 0.
+        Macro expansion is expected to have been done before attempting to
+        parse the expression.
+        >>> evaluator.eval("x")
+        0
+
+        >>> evaluator.eval("'a'")
+        97
+
+        >>> evaluator.eval(r"'\0'")
+        0
+
+        >>> evaluator.eval('1 + 2')
+        3
+
+        >>> evaluator.eval('1 + -1')
+        0
+
+        >>> evaluator.eval('2 * 3 + 1')
+        7
+
+        >>> evaluator.eval('2 * (3 + 1)')
+        8
+
+        >>> evaluator.eval('1 + 3 * 2')
+        7
+
+        >>> evaluator.eval('(1 + 3) * 2')
+        8
+
+        >>> evaluator.eval('1 + 2 + 3')
+        6
+
+        >>> evaluator.eval('1 << 3')
+        8
+
+        >>> evaluator.eval('!0')
+        1
+
+        >>> evaluator.eval('!!0')
+        0
+
+        >>> for x in (0, 1):
+        ...     for y in (0, 1):
+        ...         print(f'{x} == {y} -> ' + str(evaluator.eval(f'{x} == {y}')))
+        ...         print(f'{x} != {y} -> ' + str(evaluator.eval(f'{x} != {y}')))
+        ...         print(f'{x} && {y} -> ' + str(evaluator.eval(f'{x} && {y}')))
+        ...         print(f'{x} || {y} -> ' + str(evaluator.eval(f'{x} || {y}')))
+        ...         print(f'{x} < {y} -> ' + str(evaluator.eval(f'{x} < {y}')))
+        ...         print(f'{x} <= {y} -> ' + str(evaluator.eval(f'{x} < {y}')))
+        ...         print(f'{x} > {y} -> ' + str(evaluator.eval(f'{x} > {y}')))
+        ...         print(f'{x} >= {y} -> ' + str(evaluator.eval(f'{x} >= {y}')))
+        0 == 0 -> True
+        0 != 0 -> False
+        0 && 0 -> 0
+        0 || 0 -> 0
+        0 < 0 -> False
+        0 <= 0 -> False
+        0 > 0 -> False
+        0 >= 0 -> True
+        0 == 1 -> False
+        0 != 1 -> True
+        0 && 1 -> 0
+        0 || 1 -> 1
+        0 < 1 -> True
+        0 <= 1 -> True
+        0 > 1 -> False
+        0 >= 1 -> False
+        1 == 0 -> False
+        1 != 0 -> True
+        1 && 0 -> 0
+        1 || 0 -> 1
+        1 < 0 -> False
+        1 <= 0 -> False
+        1 > 0 -> True
+        1 >= 0 -> True
+        1 == 1 -> True
+        1 != 1 -> False
+        1 && 1 -> 1
+        1 || 1 -> 1
+        1 < 1 -> False
+        1 <= 1 -> False
+        1 > 1 -> False
+        1 >= 1 -> True
+
+    Possible errors:
+
+        >>> evaluator.eval('1 + .3')
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:5: Floats not allowed in preprocessor expressions: '.3'
+
+        >>> evaluator.eval('1 + 2e6')
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:5: Couldn't parse as number: '2e6'
+
+        >>> evaluator.eval('* 2')
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: * 2
+
+        >>> evaluator.eval('2 *')
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: 2 *
+
+        >>> evaluator.eval('(')
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: (
+
+        >>> evaluator.eval(')')
+        Traceback (most recent call last):
+         ...
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: )
+
     """
-    if isinstance(tokens, str):
-        # Support caller passing us a string, handy for doctests
-        tokens = [token for line in Lexer().tokenize(tokens)
-            for token in line]
-    rules = get_grammar_rules()
-    parser = GrammarParser(rules, tokens, squash_children=True)
-    return parser.match()
 
+    rules_filename = GRAMMAR_FILENAME
+    squash_children = True
 
-def _parse_number(token: Token) -> int:
-    text = token.value
-    if '.' in text:
-        raise ParseError(token, f"Floats not allowed in preprocessor expressions: {text!r}")
-    try:
-        if text.startswith('0x'):
-            return int(text[2:], 16)
-        elif len(text) > 1 and text.startswith('0'):
-            return int(text[1:], 8)
-        else:
-            return int(text)
-    except ValueError:
-        raise ParseError(token, f"Couldn't parse as number: {text!r}")
+    def no_match(self, tokens: list[Token]):
+        # TODO: need to get enough info back from GrammarParser that we
+        # can show a decent error message here...
+        # Example from GCC:
+        #
+        #   $ echo -e '#if ++x\nOK\n#endif' | cpp -P
+        #   <stdin>:1:5: error: token "++" is not valid in preprocessor expressions
+        #
+        first_token = tokens[0] if tokens else None
+        tokens_s = ' '.join(token.value for token in tokens)
+        raise ParseError(first_token, f"Couldn't parse as preprocessor expression: {tokens_s}")
 
-
-def _eval_match(match: ParseMatch) -> int:
-    if match.rule_name == 'expression':
+    def on_expression(self, match: ParseMatch) -> int:
         # Comma operator, value is that of last argument
-        value = _eval_match(match.children[-1])
-    elif match.rule_name == 'primary_expression':
+        return self.on(match.children[-1])
+
+    def on_primary_expression(self, match: ParseMatch) -> int:
         token = match.token
         if token.toktype == 'NUMBER':
             return _parse_number(token)
@@ -101,9 +229,10 @@ def _eval_match(match: ParseMatch) -> int:
             # Identifiers all have the value 0, because they were supposed
             # to have been expanded before being passed in to parse_pp_expr
             return 0
-    elif match.rule_name == 'unary_expression':
+
+    def on_unary_expression(self, match: ParseMatch) -> int:
         children = reversed(match.children)
-        value = _eval_match(next(children))
+        value = self.on(next(children))
         for child in children:
             op = child.token.value
             if op == '+':
@@ -118,22 +247,24 @@ def _eval_match(match: ParseMatch) -> int:
                 # Should never happen
                 raise Exception(f"Unrecognized unary operator: {op!r}")
         return value
-    elif match.rule_name == 'conditional_expression':
+
+    def on_conditional_expression(self, match: ParseMatch) -> int:
         # Ternary operator
-        condval = _eval_match(match.children[0])
-        return _eval_match(match.children[1 if condval else 2])
-    else:
+        condval = self.on(match.children[0])
+        return self.on(match.children[1 if condval else 2])
+
+    def default(self, match: ParseMatch) -> int:
         # Binary expression
         single_op = SINGLE_OPS.get(match.rule_name)
         children = iter(match.children)
-        value = _eval_match(next(children))
+        value = self.on(next(children))
         for child in children:
             if single_op:
                 op = single_op
             else:
                 op = child.token.value
                 child = next(children)
-            arg = _eval_match(child)
+            arg = self.on(child)
             if op == '*':
                 value *= arg
             elif op == '/':
@@ -174,152 +305,3 @@ def _eval_match(match: ParseMatch) -> int:
                 # Should never happen
                 raise Exception(f"Unrecognized binary operator: {op!r}")
         return value
-
-
-def eval_pp_expr(tokens: list[Token] | str) -> int:
-    r"""Evaluates a C preprocessor conditional expression
-
-        >>> eval_pp_expr("1")
-        1
-
-        >>> eval_pp_expr("+1")
-        1
-
-        >>> eval_pp_expr("-1")
-        -1
-
-        Identifers are all treated as the value 0.
-        Macro expansion is expected to have been done before attempting to
-        parse the expression.
-        >>> eval_pp_expr("x")
-        0
-
-        >>> eval_pp_expr("'a'")
-        97
-
-        >>> eval_pp_expr(r"'\0'")
-        0
-
-        >>> eval_pp_expr('1 + 2')
-        3
-
-        >>> eval_pp_expr('1 + -1')
-        0
-
-        >>> eval_pp_expr('2 * 3 + 1')
-        7
-
-        >>> eval_pp_expr('2 * (3 + 1)')
-        8
-
-        >>> eval_pp_expr('1 + 3 * 2')
-        7
-
-        >>> eval_pp_expr('(1 + 3) * 2')
-        8
-
-        >>> eval_pp_expr('1 + 2 + 3')
-        6
-
-        >>> eval_pp_expr('1 << 3')
-        8
-
-        >>> eval_pp_expr('!0')
-        1
-
-        >>> eval_pp_expr('!!0')
-        0
-
-        >>> for x in (0, 1):
-        ...     for y in (0, 1):
-        ...         print(f'{x} == {y} -> ' + str(eval_pp_expr(f'{x} == {y}')))
-        ...         print(f'{x} != {y} -> ' + str(eval_pp_expr(f'{x} != {y}')))
-        ...         print(f'{x} && {y} -> ' + str(eval_pp_expr(f'{x} && {y}')))
-        ...         print(f'{x} || {y} -> ' + str(eval_pp_expr(f'{x} || {y}')))
-        ...         print(f'{x} < {y} -> ' + str(eval_pp_expr(f'{x} < {y}')))
-        ...         print(f'{x} <= {y} -> ' + str(eval_pp_expr(f'{x} < {y}')))
-        ...         print(f'{x} > {y} -> ' + str(eval_pp_expr(f'{x} > {y}')))
-        ...         print(f'{x} >= {y} -> ' + str(eval_pp_expr(f'{x} >= {y}')))
-        0 == 0 -> True
-        0 != 0 -> False
-        0 && 0 -> 0
-        0 || 0 -> 0
-        0 < 0 -> False
-        0 <= 0 -> False
-        0 > 0 -> False
-        0 >= 0 -> True
-        0 == 1 -> False
-        0 != 1 -> True
-        0 && 1 -> 0
-        0 || 1 -> 1
-        0 < 1 -> True
-        0 <= 1 -> True
-        0 > 1 -> False
-        0 >= 1 -> False
-        1 == 0 -> False
-        1 != 0 -> True
-        1 && 0 -> 0
-        1 || 0 -> 1
-        1 < 0 -> False
-        1 <= 0 -> False
-        1 > 0 -> True
-        1 >= 0 -> True
-        1 == 1 -> True
-        1 != 1 -> False
-        1 && 1 -> 1
-        1 || 1 -> 1
-        1 < 1 -> False
-        1 <= 1 -> False
-        1 > 1 -> False
-        1 >= 1 -> True
-
-    Possible errors:
-
-        >>> eval_pp_expr('1 + .3')
-        Traceback (most recent call last):
-         ...
-        loosey.pplex.ParseError: <fakefile>:1:5: Floats not allowed in preprocessor expressions: '.3'
-
-        >>> eval_pp_expr('1 + 2e6')
-        Traceback (most recent call last):
-         ...
-        loosey.pplex.ParseError: <fakefile>:1:5: Couldn't parse as number: '2e6'
-
-        >>> eval_pp_expr('* 2')
-        Traceback (most recent call last):
-         ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: * 2
-
-        >>> eval_pp_expr('2 *')
-        Traceback (most recent call last):
-         ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: 2 *
-
-        >>> eval_pp_expr('(')
-        Traceback (most recent call last):
-         ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: (
-
-        >>> eval_pp_expr(')')
-        Traceback (most recent call last):
-         ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: )
-
-    """
-    if isinstance(tokens, str):
-        # Support caller passing us a string, handy for doctests
-        tokens = [token for line in Lexer().tokenize(tokens)
-            for token in line]
-    first_token = tokens[0] if tokens else None
-    match = parse_pp_expr(tokens)
-    if match is None:
-        # TODO: need to get enough info back from GrammarParser that we
-        # can show a decent error message here...
-        # Example from GCC:
-        #
-        #   $ echo -e '#if ++x\nOK\n#endif' | cpp -P
-        #   <stdin>:1:5: error: token "++" is not valid in preprocessor expressions
-        #
-        tokens_s = ' '.join(token.value for token in tokens)
-        raise ParseError(first_token, f"Couldn't parse as preprocessor expression: {tokens_s}")
-    return _eval_match(match)

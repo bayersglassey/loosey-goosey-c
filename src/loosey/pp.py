@@ -25,7 +25,7 @@ from loosey.pplex import (
     tokenize_file,
     to_string_literal,
 )
-from loosey.ppexpr import eval_pp_expr
+from loosey.ppexpr import ConditionalExpressionEvaluator
 from loosey.recursion import debug_recursion, debug_recursion_log
 
 
@@ -540,6 +540,8 @@ class Preprocessor:
 
         self.nonempty_line_count: int = 0
 
+        self.ppexpr_evaluator = ConditionalExpressionEvaluator()
+
     def create_child(self, **kwargs) -> 'Preprocessor':
         for k in self.SHARED_ATTRS:
             if k not in kwargs:
@@ -861,7 +863,7 @@ class Preprocessor:
             if token.toktype != 'DEBUG']
 
         # Evaluate the conditional expression
-        return bool(eval_pp_expr(expanded_tokens))
+        return bool(self.ppexpr_evaluator.eval(expanded_tokens))
 
     def push_conditional(self, frame: ConditionalFrame):
         if not frame.was_true:
