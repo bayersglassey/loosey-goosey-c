@@ -65,86 +65,50 @@ See also:
 
 ## The C preprocessor
 
-At the moment, we only have a preprocessor.
+Implemented in pure Python!
+It's actually fairly complete.
 
 See its documentation here:
 * [docs/preprocessor.md](/docs/preprocessor.md)
 
-It handles macros in the usual way:
+Example usage:
 ```
 $ echo -e '#define M(X) [X]\nM(M(1))' | python -m loosey.pp
 [ [ 1 ] ]
 ```
 
-And for fun, you can output the tokens on separate lines, but at their correct
-horizontal positions...
-```
-$ ack -B1 -A5 "^sortslice_copy\(" ~/repos/cpython/Objects/listobject.c 
-Py_LOCAL_INLINE(void)
-sortslice_copy(sortslice *s1, Py_ssize_t i, sortslice *s2, Py_ssize_t j)
-{
-    s1->keys[i] = s2->keys[j];
-    if (s1->values != NULL)
-        s1->values[i] = s2->values[j];
-}
 
-$ ack -B1 -A5 "^sortslice_copy\(" ~/repos/cpython/Objects/listobject.c | python -m loosey.pp --tree
-Py_LOCAL_INLINE
-               (
-                void
-                    )
-sortslice_copy
-              (
-               sortslice
-                         *
-                          s1
-                            ,
-                              Py_ssize_t
-                                         i
-                                          ,
-                                            sortslice
-                                                      *
-                                                       s2
-                                                         ,
-                                                           Py_ssize_t
-                                                                      j
-                                                                       )
-{
-    s1
-      ->
-        keys
-            [
-             i
-              ]
-                =
-                  s2
-                    ->
-                      keys
-                          [
-                           j
-                            ]
-                             ;
-    if
-       (
-        s1
-          ->
-            values
-                   !=
-                      NULL
-                          )
-        s1
-          ->
-            values
-                  [
-                   i
-                    ]
-                      =
-                        s2
-                          ->
-                            values
-                                  [
-                                   j
-                                    ]
-                                     ;
-}
+## Mini C Interpreter
+
+Work in progress.
+
+Allows C code to use Python values and functions, and allows definition of
+C functions usable from Python.
+
+Example usage:
+```python
+In [1]: from loosey.minic import MiniC
+
+In [2]: minic = MiniC()
+
+In [3]: add = minic.eval('int add(int x, int y) { int z = x + y; return z; }')
+
+In [4]: add
+Out[4]: add(x, y)
+
+In [5]: add(3, 4)
+Out[5]: 7
+
+In [6]: minic.eval('int x = 3, total = add(x, 5);')
+Out[6]: {'x': 3, 'total': 8}
+
+In [7]: minic.globals
+Out[7]: {'add': add(x, y), 'x': 3, 'total': 8}
+
+In [8]: import math
+
+In [9]: minic.globals['sqrt'] = math.sqrt
+
+In [10]: minic.eval('int x = sqrt(25);')
+Out[10]: {'x': 5.0}
 ```
