@@ -223,6 +223,11 @@ class ParseMatch(NamedTuple):
             print('  ' * depth + self.token.value)
 
 
+# Internal type used by GrammarParser.match_pattern.
+# Represents a tuple (children, token_i)
+_MatchResult = tuple[list[ParseMatch], int]
+
+
 class GrammarParser:
     """
 
@@ -339,12 +344,18 @@ class GrammarParser:
         rule = self.rules[rule_name]
         self.increase_match_depth()
         try:
+            # Attempt to match against each of this rule's patterns
             for pattern_i in range(len(rule.patterns)):
                 match = self.match_pattern(rule_name, pattern_i, token_i)
                 if match is not None:
+                    # Hooray, we matched one of this rule's patterns
                     if full and match.token_i + match.n_tokens != len(self.tokens):
+                        # If user only wanted a full match, and we only have a
+                        # partial match, then it's no match at all!
                         return None
+                    # We have a match for the rule!
                     return match
+            # No patterns matched, so the rule doesn't match!
             return None
         finally:
             self.match_depth -= 1
@@ -354,33 +365,40 @@ class GrammarParser:
         pattern = rule.patterns[pattern_i]
         if self.verbose:
             print('. ' * self.match_depth + f"PATTERN {pattern_i}: {pattern_to_string(pattern)}")
+
+        # If we already have a cached result, just return that
         cache_key = (rule_name, pattern_i, token_i)
         if cache_key in self.match_cache:
             if self.verbose:
                 print('. ' * self.match_depth + "FOUND IN CACHE!")
             return self.match_cache[cache_key]
 
+        # Make sure that when we return a value, we add it to the cache
         def cached(value):
             self.match_cache[cache_key] = value
             return value
 
+        # If we're past the end of our tokens, clearly there is no match!
+        # (This means we don't support "empty" rules or patterns.)
         if token_i >= len(self.tokens):
             return cached(None)
 
-        original_token_i = token_i
-        children = []
-
-        def match_subpattern(subpattern: GrammarPattern) -> bool:
-            nonlocal token_i
+        # Recursively match the pattern and its subpatterns
+        def match_subpattern(subpattern: GrammarPattern, token_i: int) -> Optional[_MatchResult]:
+            # NOTE: we return (children, token_i) or None
+            original_token_i = token_i
+            children = []
             self.increase_match_depth()
             try:
                 for part_type, part_value in subpattern:
                     if part_type == 'rule':
+                        # This pattern consists of matching against another
+                        # rule
                         match = self.match_rule(part_value, token_i)
                         if match is None:
                             if self.verbose:
                                 print('. ' * self.match_depth + "NOT MATCH")
-                            return False
+                            return None
                         assert match.token_i == token_i
                         token_i = token_i + match.n_tokens
                         children.append(match)
@@ -388,36 +406,43 @@ class GrammarParser:
                         # Zero or one matches of subpattern
                         if self.verbose:
                             print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {pattern_to_string(part_value)}")
-                        old_token_i = token_i
-                        if not match_subpattern(part_value):
-                            token_i = old_token_i
+                        result = match_subpattern(part_value, token_i)
+                        if result:
+                            sub_children, token_i = result
+                            children.extend(sub_children)
                     elif part_type == 'star':
                         # Zero or more matches of subpattern
                         if self.verbose:
                             print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {pattern_to_string(part_value)}")
-                        old_token_i = token_i
-                        while match_subpattern(part_value):
-                            old_token_i = token_i
-                        token_i = old_token_i
+                        while True:
+                            result = match_subpattern(part_value, token_i)
+                            if result:
+                                sub_children, token_i = result
+                                children.extend(sub_children)
+                            else:
+                                break
                     else:
+                        # Matching against a single token
                         if token_i >= len(self.tokens):
                             if self.verbose:
                                 print('. ' * self.match_depth + "END OF INPUT")
-                            return False
+                            return None
                         token = self.tokens[token_i]
                         if self.verbose:
                             print('. ' * self.match_depth + f"TOKEN: {token.value!r}")
                         if part_type == 'toktype':
+                            # Match against token's toktype
                             if token.toktype != part_value:
                                 if self.verbose:
                                     print('. ' * self.match_depth + "NOT MATCH")
-                                return False
+                                return None
                             token_i += 1
                         elif part_type == 'tokvalue':
+                            # Match against token's value
                             if token.value != part_value:
                                 if self.verbose:
                                     print('. ' * self.match_depth + "NOT MATCH")
-                                return False
+                                return None
                             token_i += 1
                         else:
                             # We should never get here...
@@ -425,25 +450,32 @@ class GrammarParser:
                 if self.verbose:
                     thing = 'RULE' if subpattern is pattern else 'SUB-PATTERN'
                     print('. ' * self.match_depth + f"{thing} MATCHED!")
-                return True
+                return children, token_i
             finally:
                 self.match_depth -= 1
 
-        if not match_subpattern(pattern):
+        # Match the pattern...
+        original_token_i = token_i
+        result = match_subpattern(pattern, token_i)
+        if result is None:
             return cached(None)
+        children, token_i = result
+
+        # Return a match object
         if self.squash_children and len(children) == 1:
             return cached(children[0]._replace(
                 token_i=original_token_i,
                 n_tokens=token_i - original_token_i,
             ))
-        return cached(ParseMatch(
-            rule_name=rule_name,
-            pattern_i=pattern_i,
-            token=self.tokens[original_token_i],
-            token_i=original_token_i,
-            n_tokens=token_i - original_token_i,
-            children=children,
-        ))
+        else:
+            return cached(ParseMatch(
+                rule_name=rule_name,
+                pattern_i=pattern_i,
+                token=self.tokens[original_token_i],
+                token_i=original_token_i,
+                n_tokens=token_i - original_token_i,
+                children=children,
+            ))
 
 
 class GrammarEvaluator:
@@ -471,9 +503,6 @@ class GrammarEvaluator:
         ...         return int(match.token.value)
         ...     def on_array(self, match):
         ...         return [self.on(child) for child in match.children]
-        ...     def no_match(self, tokens):
-        ...         s = ' '.join(token.value for token in tokens)
-        ...         raise ParseError(tokens[0], f"Couldn't parse: {s}")
 
         >>> evaluator = ValueEvaluator()
 
@@ -489,11 +518,11 @@ class GrammarEvaluator:
         >>> evaluator.eval('x y z')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse: x y z
+        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as: value
 
     """
 
-    rules_filename: Optional[str] = None
+    grammar_filename: Optional[str] = None
     main_rule_name: Optional[str] = None
     squash_children: bool = False
 
@@ -513,11 +542,11 @@ class GrammarEvaluator:
     @cached_property
     def grammar_rules(self) -> dict[str, GrammarRule]:
         # NOTE: subclasses may want to override this property
-        if self.rules_filename is not None:
-            return parse_rules_from_file(self.rules_filename)
+        if self.grammar_filename is not None:
+            return parse_rules_from_file(self.grammar_filename)
         raise NotImplementedError("To be implemented by subclasses")
 
-    def parse(self, tokens: list[Token] | str) -> Optional[ParseMatch]:
+    def parse(self, tokens: list[Token] | str, rule_name: Optional[str] = None) -> Optional[ParseMatch]:
         if isinstance(tokens, str):
             # Support caller passing us a string, handy for doctests
             tokens = [token for line in Lexer().tokenize(tokens)
@@ -525,25 +554,26 @@ class GrammarEvaluator:
         parser = GrammarParser(
             self.grammar_rules,
             tokens,
-            main_rule_name=self.main_rule_name,
+            main_rule_name=rule_name or self.main_rule_name,
             squash_children=self.squash_children,
         )
         return parser.match()
 
-    def no_match(self, tokens: list[Token]):
+    def no_match(self, tokens: list[Token], rule_name: str):
         # NOTE: subclasses probably want to override this method with custom
         # error message, etc
         first_token = tokens[0] if tokens else None
-        raise ParseError(first_token, "Couldn't parse")
+        raise ParseError(first_token, f"Couldn't parse as: {rule_name}")
 
-    def eval(self, tokens: list[Token] | str):
+    def eval(self, tokens: list[Token] | str, rule_name: Optional[str] = None):
         if isinstance(tokens, str):
             # Support caller passing us a string, handy for doctests
             tokens = [token for line in Lexer().tokenize(tokens)
                 for token in line]
-        match = self.parse(tokens)
+        rule_name = rule_name or self.main_rule_name
+        match = self.parse(tokens, rule_name)
         if match is None:
-            self.no_match(tokens)
+            self.no_match(tokens, rule_name)
         return self.on(match)
 
     def default(self, match: ParseMatch):

@@ -199,10 +199,10 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
 
     """
 
-    rules_filename = GRAMMAR_FILENAME
+    grammar_filename = GRAMMAR_FILENAME
     squash_children = True
 
-    def no_match(self, tokens: list[Token]):
+    def no_match(self, tokens: list[Token], rule_name: str):
         # TODO: need to get enough info back from GrammarParser that we
         # can show a decent error message here...
         # Example from GCC:
