@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 from contextlib import contextmanager
 
 from loosey import get_data_filename
@@ -80,6 +80,27 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         >>> minic.eval('int total = ten(x);')
         {'total': 990}
 
+        The C preprocessor is available too!
+        >>> minic.eval('#define DOUBLE(X) X + X')
+        >>> minic.eval('int x = DOUBLE(3);')
+        {'x': 6}
+
+        Parsing of typedefs are correctly handled...
+        See: https://en.wikipedia.org/wiki/Lexer_hack
+        >>> minic.parse('typedef int Integer; Integer *x;').pprint()
+        translation_unit
+          declaration
+            declspec: declaration_specifiers
+              typedef
+              int
+            declare: Integer
+          declaration
+            declspec: declaration_specifiers
+              Integer
+            declarator
+              pointer: *
+              declare: x
+
     """
 
     grammar_filename = GRAMMAR_FILENAME
@@ -90,6 +111,65 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         super().__init__(**kwargs)
         self.globals = {}
         self.scopes = [self.globals]
+
+        # The rules for parsing C typedefs are awful, because they're not
+        # purely based on the structure of the grammar, they're also based
+        # on whether the given identifier was declared as a typedef...
+        # See: https://en.wikipedia.org/wiki/Lexer_hack
+        # Anyway, the typedef_blocks and related callbacks here are used to
+        # handle that.
+        self.typedef_blocks: list[set[str]] = []
+        self.pattern_callbacks = {
+            ('compound_statement', 'block'):
+                (self.enter_parse_block, self.exit_parse_block),
+            ('declaration', None):
+                (None, self.exit_declaration),
+        }
+        self.toktype_predicates = {
+            'TYPE_NAME': self.is_type_name_token,
+        }
+
+    def no_match(self, tokens: list[Token], rule_name: str) -> Optional[ParseMatch]:
+        if not tokens:
+            # If we got no tokens from parsing, that might mean e.g. that
+            # user hit Enter at the REPL without typing anything, or that
+            # they entered some valid C preprocessor stuff which didn't
+            # generate any tokens, like a #define.
+            # That's all good!
+            return None
+        return super().no_match(tokens, rule_name)
+
+    def parse(self, *args, **kwargs):
+        # Add an initial "typedef block" so typedefs are handled correctly
+        # for the duration of the parse
+        self.typedef_blocks.append(set())
+        try:
+            return super().parse(*args, **kwargs)
+        finally:
+            self.typedef_blocks.pop()
+
+    def enter_parse_block(self, token: Token):
+        self.typedef_blocks.append(set())
+
+    def exit_parse_block(self, token: Token, match: Optional[ParseMatch]):
+        self.typedef_blocks.pop()
+
+    def exit_declaration(self, token: Token, match: Optional[ParseMatch]):
+        if match is None:
+            return
+        parse_block = self.typedef_blocks[-1]
+        declares = match.findall('.* declare:')
+        for declare in declares:
+            name = declare.token.value
+            parse_block.add(name)
+
+    def is_type_name_token(self, token: Token) -> bool:
+        # TODO: also check for typedefs which were previously evaluated,
+        # not just which were declared during the current parse (which is
+        # all that is tracked by self.typedef_blocks)
+        return (
+            token.toktype == 'IDENTIFIER'
+            and self.typedef_blocks and token.value in self.typedef_blocks[-1])
 
     @contextmanager
     def new_scope(self) -> dict[str, Value]:

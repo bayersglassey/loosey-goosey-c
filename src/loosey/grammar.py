@@ -1,9 +1,16 @@
 import re
 import os
 from argparse import ArgumentParser
-from typing import NamedTuple, Literal, Sequence, Optional, Union
+from typing import (
+    Literal,
+    Sequence,
+    NamedTuple,
+    Optional,
+    Union,
+    Callable,
+)
 from string import ascii_lowercase, ascii_uppercase
-from functools import cached_property
+from functools import cached_property, lru_cache
 
 from loosey.pplex import Token, Lexer, ParseError, tokenize_file
 
@@ -220,6 +227,40 @@ class ParseMatchKey(NamedTuple):
     token_i: int
 
 
+# (rule_name or '.', pattern_name or '.', suffix)
+_FindPart = tuple[str, Optional[str], str]
+
+
+@lru_cache
+def _parse_find_parts(spec: str) -> list[_FindPart]:
+    # Parse the argument to ParseMatch.find() (the "spec") into "parts",
+    # each part being a tuple:
+    #   (rule_name, pattern_name, suffix)
+    # ...where suffix is a regex suffix '*', '+', '?', or ''.
+    parts: list[_FindPart] = []
+    if not spec:
+        return parts
+    for part_s in spec.split(' '):
+        if part_s[-1] in '*+?':
+            suffix = part_s[-1]
+            part_s = part_s[:-1]
+        else:
+            suffix = ''
+        if ':' in part_s:
+            pattern_name, rule_name = part_s.split(':', 1)
+            if not pattern_name:
+                pattern_name = None
+            if not rule_name:
+                rule_name = '.'
+        else:
+            rule_name = part_s
+            pattern_name = '.'
+        if not rule_name:
+            raise Exception(f"Bad find syntax (no rule name): {part_s!r}")
+        parts.append((rule_name, pattern_name, suffix))
+    return parts
+
+
 class ParseMatch(NamedTuple):
     """When one of a rule's patterns matches, we get a parse match"""
     rule_name: str
@@ -237,9 +278,9 @@ class ParseMatch(NamedTuple):
     def prettystring(self):
         if self.children:
             children_s = ' '.join(child.prettystring() for child in self.children)
-            return f'({self.rule_name} {children_s})'
+            return f'{self.spec} ({children_s})'
         else:
-            return self.token.value
+            return f'{self.spec} {self.token.value}'
 
     def pprint(self, depth=0):
         prefix = '  ' * depth
@@ -256,34 +297,79 @@ class ParseMatch(NamedTuple):
     def spec(self) -> str:
         return f"{self.pattern_name or ''}:{self.rule_name}"
 
-    def find(self, spec: str) -> Optional['ParseMatch']:
-        matches = self.findall(spec)
-        return matches[0] if matches else None
+    def find(self, spec: str, **kwargs) -> Optional['ParseMatch']:
+        matches = self.findall(spec, **kwargs)
+        return None if not matches else matches[0]
 
-    def findall(self, spec: str) -> list['ParseMatch']:
-        # TODO: implement regex-like operators, like '*' and '?'
-        parts = [] if not spec else spec.split(' ')
+    def findall(self, spec: str, *, verbose: bool = False) -> list['ParseMatch']:
+
+        # Parse the spec into "parts", each part being a tuple:
+        #   (rule_name, pattern_name, suffix)
+        # ...where suffix is a regex suffix '*', '+', '?', or ''.
+        parts: list[_FindPart] = _parse_find_parts(spec)
+
         matches = [self]
         for part in parts:
-            if ':' in part:
-                pattern_name, rule_name = part.split(':', 1)
-                if not pattern_name:
-                    pattern_name = None
+            rule_name, pattern_name, suffix = part
+            if verbose:
+                print(f"Filtering {len(matches)} matches by: {pattern_name}:{rule_name}{suffix}")
+            # Prepare to enter the loop...
+            if suffix and suffix in '*?':
+                # Even zero applications of this part are ok, i.e. whatever
+                # matches we already had, we should keep!
+                iteration_matches = matches.copy()
             else:
-                rule_name = part
-                pattern_name = '.'
-            if not rule_name:
-                raise Exception(f"Bad part (no rule name): {part!r}")
-            old_matches = matches
-            matches = []
-            for match in old_matches:
-                for child in match.children:
-                    if (
-                        (rule_name == '.' or child.rule_name == rule_name) and
-                        (pattern_name == '.' or child.pattern_name == pattern_name)
-                    ):
-                        matches.append(child)
+                iteration_matches = matches
+                matches = []
+            while True:
+                # We may go through several iterations of a loop, generating
+                # matches each time around it.
+                if verbose:
+                    print(f"  Iterating on {len(matches)} matches")
+                child_matches = []
+                for match in iteration_matches:
+                    if verbose:
+                        print(f"    Considering children of: {match.prettystring()}")
+                    for child in match.children:
+                        if (
+                            (rule_name == '.' or child.rule_name == rule_name) and
+                            (pattern_name == '.' or child.pattern_name == pattern_name)
+                        ):
+                            if verbose:
+                                print(f"      Accepted: {child.prettystring()}")
+                            child_matches.append(child)
+                        else:
+                            if verbose:
+                                print(f"      Rejected: {child.prettystring()}")
+                # Save the matches from this loop iteration
+                matches.extend(child_matches)
+                # Potentially continue applying this same part to the matches
+                # from this loop iteration
+                if suffix and suffix in '*+' and child_matches:
+                    # We had some matches, now consider their children!
+                    iteration_matches = child_matches
+                    continue
+                else:
+                    break
+            if not matches:
+                # If we're out of potential matches, then we're done, exit
+                # early, applying more parts of the spec wouldn't result in
+                # any matches
+                break
+        # If we're out of parts, then we've successfully applied the entire
+        # spec, so return whatever matches we have
         return matches
+
+
+# Something which happens when the indicated rule is entered/exited
+PatternEnterCallback = Callable[[Token], None]
+PatternExitCallback = Callable[[Token, Optional[ParseMatch]], None]
+
+# A pair (rule_name, pattern_name) which maps to a Pattern{Enter,Exit}Callback
+PatternCallbackKey = tuple[str, Optional[str]]
+
+# Decides something about the given token
+TokenPredicate = Callable[[Token], bool]
 
 
 # Internal type used by GrammarParser.match_pattern.
@@ -371,44 +457,70 @@ class GrammarParser:
 
     Using match.find() and match.findall():
 
-        >>> match = parse('[1, [2, 3], -4]')
+        >>> match = parse('[[1, [2, 3], -4], 99]', squash_children=True)
         >>> match.pprint()
-        value
+        array
           array
             1
-            value
-              array
-                2
-                3
+            array
+              2
+              3
             negative: value
               4
+          99
 
-        >>> match.find('array array')
+        >>> match.find('array value').pprint()
+        1
 
-        >>> match.find('array value array').pprint()
-        array
-          2
-          3
+        >>> match.find('array nonexistant')
 
         >>> for child in match.findall('array value'): child.pprint()
         1
-        value
-          array
-            2
-            3
         negative: value
           4
 
-        >>> for child in match.findall('array negative:value'): child.pprint()
+        >>> for child in match.findall('array .'): child.pprint()
+        1
+        array
+          2
+          3
         negative: value
           4
 
         >>> for child in match.findall('array :value'): child.pprint()
         1
-        value
-          array
-            2
-            3
+
+        >>> for child in match.findall('array negative:value'): child.pprint()
+        negative: value
+          4
+
+        >>> for child in match.findall('. value'): child.pprint()
+        1
+        negative: value
+          4
+
+        >>> for child in match.findall('.? value'): child.pprint()
+        99
+        1
+        negative: value
+          4
+
+        >>> for child in match.findall('.+ value'): child.pprint()
+        1
+        negative: value
+          4
+        2
+        3
+        4
+
+        >>> for child in match.findall('.* value'): child.pprint()
+        99
+        1
+        negative: value
+          4
+        2
+        3
+        4
 
     """
 
@@ -421,6 +533,8 @@ class GrammarParser:
             main_rule_name: Optional[str] = None,
             max_match_depth: Optional[int] = None,
             squash_children: bool = False,
+            pattern_callbacks: dict[PatternCallbackKey, tuple[PatternEnterCallback, PatternExitCallback]] = None,
+            toktype_predicates: dict[str, TokenPredicate] = None,
             ):
         if isinstance(rules, str):
             # Support caller passing us text, handy for doctests
@@ -434,6 +548,8 @@ class GrammarParser:
         self.verbose = verbose
         self.max_match_depth = max_match_depth
         self.squash_children = squash_children
+        self.pattern_callbacks = pattern_callbacks or {}
+        self.toktype_predicates = toktype_predicates or {}
 
         if main_rule_name is None:
             main_rule_name = next(reversed(self.rules), None)
@@ -497,6 +613,8 @@ class GrammarParser:
         if token_i >= len(self.tokens):
             return cached(None)
 
+        token = self.tokens[token_i]
+
         # Recursively match the pattern and its subpatterns
         def match_subpattern(subpattern: GrammarPattern, token_i: int) -> Optional[_MatchResult]:
             # NOTE: we return (children, token_i) or None
@@ -546,7 +664,12 @@ class GrammarParser:
                             print('. ' * self.match_depth + f"TOKEN: {token.value!r}")
                         if part_type == 'toktype':
                             # Match against token's toktype
-                            if token.toktype != part_value:
+                            toktype_predicate = self.toktype_predicates.get(part_value)
+                            if (
+                                token.toktype != part_value
+                                if toktype_predicate is None else
+                                not toktype_predicate(token)
+                            ):
                                 if self.verbose:
                                     print('. ' * self.match_depth + "NOT MATCH")
                                 return None
@@ -568,32 +691,48 @@ class GrammarParser:
             finally:
                 self.match_depth -= 1
 
+        # HACK: maybe kick off some arbitrary code when we enter/exit the
+        # rule.
+        # Used for C's gross typedef shenanigans, see:
+        # https://en.wikipedia.org/wiki/Lexer_hack
+        callback_key = (rule_name, pattern.name)
+        enter_callback, exit_callback = self.pattern_callbacks.get(
+            callback_key, (None, None))
+
         # Match the pattern...
         original_token_i = token_i
-        result = match_subpattern(pattern, token_i)
-        if result is None:
-            return cached(None)
-        children, token_i = result
+        if enter_callback is not None:
+            enter_callback(token)
+        match = None
+        try:
+            result = match_subpattern(pattern, token_i)
+            if result is None:
+                return cached(None)
+            children, token_i = result
 
-        # Return a match object
-        if (
-            self.squash_children
-            and len(children) == 1
-            and not pattern.name # don't squash named patterns!
-        ):
-            return cached(children[0]._replace(
-                token_i=original_token_i,
-                n_tokens=token_i - original_token_i,
-            ))
-        else:
-            return cached(ParseMatch(
-                rule_name=rule_name,
-                pattern_name=pattern.name,
-                token=self.tokens[original_token_i],
-                token_i=original_token_i,
-                n_tokens=token_i - original_token_i,
-                children=children,
-            ))
+            # Create a match object
+            if (
+                self.squash_children
+                and len(children) == 1
+                and not pattern.name # don't squash named patterns!
+            ):
+                match = cached(children[0]._replace(
+                    token_i=original_token_i,
+                    n_tokens=token_i - original_token_i,
+                ))
+            else:
+                match = cached(ParseMatch(
+                    rule_name=rule_name,
+                    pattern_name=pattern.name,
+                    token=self.tokens[original_token_i],
+                    token_i=original_token_i,
+                    n_tokens=token_i - original_token_i,
+                    children=children,
+                ))
+            return match
+        finally:
+            if exit_callback is not None:
+                exit_callback(token, match)
 
 
 class GrammarEvaluator:
@@ -650,6 +789,9 @@ class GrammarEvaluator:
     main_rule_name: Optional[str] = None
     squash_children: bool = False
 
+    pattern_callbacks: dict[PatternCallbackKey, tuple[PatternEnterCallback, PatternExitCallback]] = None
+    toktype_predicates: dict[str, TokenPredicate] = None
+
     def __init__(self):
         self.validate()
 
@@ -694,10 +836,12 @@ class GrammarEvaluator:
             tokens,
             main_rule_name=rule_name or self.main_rule_name,
             squash_children=self.squash_children,
+            pattern_callbacks=self.pattern_callbacks,
+            toktype_predicates=self.toktype_predicates,
         )
         return parser.match()
 
-    def no_match(self, tokens: list[Token], rule_name: str):
+    def no_match(self, tokens: list[Token], rule_name: str) -> Optional[ParseMatch]:
         # NOTE: subclasses may want to override this method with custom
         # error message, etc
         first_token = tokens[0] if tokens else None
@@ -708,7 +852,7 @@ class GrammarEvaluator:
         rule_name = rule_name or self.main_rule_name
         match = self.parse(tokens, rule_name)
         if match is None:
-            self.no_match(tokens, rule_name)
+            return self.no_match(tokens, rule_name)
         return self.on(match)
 
     def default(self, match: ParseMatch):

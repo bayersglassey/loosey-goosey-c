@@ -1,3 +1,4 @@
+from typing import Optional
 
 from loosey import get_data_filename
 from loosey.pplex import (
@@ -202,7 +203,7 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
     grammar_filename = GRAMMAR_FILENAME
     squash_children = True
 
-    def no_match(self, tokens: list[Token], rule_name: str):
+    def no_match(self, tokens: list[Token], rule_name: str) -> Optional[ParseMatch]:
         # TODO: need to get enough info back from GrammarParser that we
         # can show a decent error message here...
         # Example from GCC:

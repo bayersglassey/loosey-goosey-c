@@ -76,3 +76,15 @@
 
     [ ] Consider looking at the GNGU cpp options & implementing some:
         https://gcc.gnu.org/onlinedocs/cpp/Invocation.html
+
+[ ] Mini-C
+
+    [X] Add support for typedefs while parsing
+        ...so, just push/pop "namespaces" as we parse {...} (i.e. the
+        compound_statement rule), populate current namespace when we
+        encounter a typedef, and add a callback to the parser for the
+        TYPE_NAME pseudo-toktype
+
+    [ ] Attempting to parse the following results in RecursionError:
+
+            int x(int);
