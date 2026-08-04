@@ -1,2 +1,2 @@
 # NOTE: run ./build.sh first
-twine upload dist/*
+twine upload --verbose dist/*
