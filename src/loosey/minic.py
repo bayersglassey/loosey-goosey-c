@@ -56,6 +56,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         >>> minic = MiniC()
 
+        >>> minic.eval('1 + 2')
+        3
+
         >>> minic.eval('int add(int x, int y) { return x + y; }')
         add(x, y)
 
@@ -80,6 +83,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     """
 
     grammar_filename = GRAMMAR_FILENAME
+    main_rule_name = 'repl_command'
     squash_children = True
 
     def __init__(self, **kwargs):

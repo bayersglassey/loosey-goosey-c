@@ -390,6 +390,11 @@ function_definition
     | ( declaration_specifiers )? declarator ( declaration_list )? compound_statement
     ;
 
+repl_command
+    | translation_unit
+    | expression
+    ;
+
 translation_unit
     | external_declaration ( external_declaration )*
     ;

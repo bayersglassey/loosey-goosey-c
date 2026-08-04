@@ -87,28 +87,32 @@ C functions usable from Python.
 
 Example usage:
 ```python
-In [1]: from loosey.minic import MiniC
+>>> from loosey.minic import MiniC
+>>> minic = MiniC()
 
-In [2]: minic = MiniC()
+>>> minic.eval('1 + 2')
+3
 
-In [3]: add = minic.eval('int add(int x, int y) { int z = x + y; return z; }')
+>>> minic.eval('1 + 2 * 10 + 3')
+24
 
-In [4]: add
-Out[4]: add(x, y)
+>>> add = minic.eval('int add(int x, int y) { int z = x + y; return z; }')
+>>> add
+add(x, y)
 
-In [5]: add(3, 4)
-Out[5]: 7
+Using a mini-C function directly from Python:
+>>> add(3, 4)
+7
 
-In [6]: minic.eval('int x = 3, total = add(x, 5);')
-Out[6]: {'x': 3, 'total': 8}
+>>> minic.eval('int x = 3, total = add(x, 5);')
+{'x': 3, 'total': 8}
 
-In [7]: minic.globals
-Out[7]: {'add': add(x, y), 'x': 3, 'total': 8}
+>>> minic.globals
+{'add': add(x, y), 'x': 3, 'total': 8}
 
-In [8]: import math
-
-In [9]: minic.globals['sqrt'] = math.sqrt
-
-In [10]: minic.eval('int x = sqrt(25);')
-Out[10]: {'x': 5.0}
+Using a Python function from within mini-C:
+>>> import math
+>>> minic.globals['sqrt'] = math.sqrt
+>>> minic.eval('sqrt(20 + 5)')
+5.0
 ```
