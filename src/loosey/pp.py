@@ -27,6 +27,7 @@ from loosey.pplex import (
 )
 from loosey.ppexpr import ConditionalExpressionEvaluator
 from loosey.recursion import debug_recursion, debug_recursion_log
+from loosey.grammar import GrammarEvaluator
 
 
 class ConditionalFrame(NamedTuple):
@@ -487,7 +488,7 @@ class Preprocessor:
     # Attributes shared with sub-processors (i.e. Preprocessor instances created
     # when processing #include directives)
     SHARED_ATTRS = (
-        'verbose',
+        'quiet',
         'warn_stdout',
         'add_debug_nodes',
         'sys_dirs',
@@ -498,14 +499,14 @@ class Preprocessor:
     def __init__(
             self,
             *,
-            verbose: bool = True,
+            quiet: bool = False,
             warn_stdout: bool = False,
             add_debug_nodes: bool = False,
             sys_dirs: Iterable[str] = (),
             local_dir: Optional[str] = None,
             macros: Optional[dict[str, Macro]] = None,
             ):
-        self.verbose = verbose
+        self.quiet = quiet
         self.warn_stdout = warn_stdout
         self.add_debug_nodes = add_debug_nodes
 
@@ -573,7 +574,7 @@ class Preprocessor:
             raise ParseError(frame.token, f"Unterminated #{frame.directive}")
 
     def warn(self, token: Token, msg: str):
-        if self.verbose:
+        if not self.quiet:
             fullmsg = f"{token.location()}: {msg}"
             if self.warn_stdout:
                 print(fullmsg)
@@ -677,7 +678,7 @@ class Preprocessor:
             elif directive == 'error':
                 raise ParseError(first_token, ' '.join(token.value for token in tokens[2:]))
             elif directive in ('if', 'ifdef', 'ifndef', 'elif', 'else', 'endif'):
-                yield from self._handle_conditional(tokens)
+                self._handle_conditional(tokens)
             elif directive in ('pragma', 'line'):
                 self.warn(first_token, f"Ignoring #{directive}")
             else:
@@ -874,7 +875,30 @@ class Preprocessor:
         return self.ifstack.pop()
 
     @debug_recursion()
-    def _handle_conditional(self, tokens: list[Token]) -> Iterator[Token]:
+    def _handle_conditional(self, tokens: list[Token]):
+        """Handles a line with a conditional directive, e.g. #if, #else,
+        #endif, etc
+
+            >>> pp = Preprocessor()
+            >>> for token in pp.process('''
+            ...     #define SOME_MACRO
+            ...     #ifdef SOME_MACRO
+            ...       #if defined SOME_MACRO
+            ...         A
+            ...       #else
+            ...         B
+            ...       #endif
+            ...     #else
+            ...       #if defined SOME_MACRO
+            ...         C
+            ...       #else
+            ...         D
+            ...       #endif
+            ...     #endif
+            ... '''): token.pprint()
+            <fakefile>:5:9: IDENTIFIER('A')
+
+        """
         first_token = tokens[0]
         directive = tokens[1].value
         if directive in 'if':
@@ -1252,7 +1276,7 @@ def main():
         else:
             local_dir = '.'
         pp = Preprocessor(
-            verbose=not args.quiet,
+            quiet=args.quiet,
             warn_stdout=args.warn_stdout,
             add_debug_nodes=args.debug,
             local_dir=local_dir,
@@ -1293,6 +1317,59 @@ def main():
         # So we can pipe ourselves into "less" and quit before lexing the
         # whole file, etc
         pass
+
+
+class GrammarEvaluatorWithPreprocessor(GrammarEvaluator):
+    """A GrammarEvaluator subclass which adds a C preprocessor which is used
+    when parsing input
+
+        >>> from loosey.grammar import parse_rules
+
+        >>> rules = parse_rules('''
+        ...     value
+        ...         | NUMBER
+        ...         | array
+        ...         ;
+        ...     array
+        ...         | '[' ( value ( ',' value )* )? ']'
+        ...         ;
+        ... ''')
+
+        >>> class ValueEvaluator(GrammarEvaluatorWithPreprocessor):
+        ...     grammar_rules = rules
+        ...     main_rule_name = 'value'
+        ...     squash_children = True
+        ...     def on_value(self, match):
+        ...         return int(match.token.value)
+        ...     def on_array(self, match):
+        ...         return [self.on(child) for child in match.children]
+
+        >>> evaluator = ValueEvaluator()
+        >>> evaluator.parse('''
+        ...     #define DOUBLE(X) X, X
+        ...     #define SOME_MACRO
+        ... ''')
+        >>> evaluator.eval('''
+        ...     #ifdef SOME_MACRO
+        ...     [1, DOUBLE(2), 3]
+        ...     #else
+        ...     [99]
+        ...     #endif
+        ... ''')
+        [1, 2, 2, 3]
+
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.pp = Preprocessor()
+
+    def coerce_tokens(self, tokens: list[Token] | str) -> list[Token]:
+        if isinstance(tokens, str):
+            lines = Lexer().tokenize(tokens)
+            return list(self.pp.process(lines))
+        else:
+            return list(self.pp.process_line(tokens))
 
 
 if __name__ == '__main__':
