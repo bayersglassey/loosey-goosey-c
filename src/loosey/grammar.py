@@ -261,15 +261,20 @@ class ParseMatch(NamedTuple):
         matches = [self]
         for part in parts:
             if ':' in part:
-                rule_name, pattern_name = part.split(':', 1)
+                pattern_name, rule_name = part.split(':', 1)
+                if not pattern_name:
+                    pattern_name = None
             else:
                 rule_name = part
-                pattern_name = None
+                pattern_name = '*'
             old_matches = matches
             matches = []
             for match in old_matches:
                 for child in match.children:
-                    if child.rule_name == rule_name and child.pattern_name == pattern_name:
+                    if (
+                        (rule_name == '*' or child.rule_name == rule_name) and
+                        (pattern_name == '*' or child.pattern_name == pattern_name)
+                    ):
                         matches.append(child)
         return matches
 
@@ -359,7 +364,7 @@ class GrammarParser:
 
     Using match.find() and match.findall():
 
-        >>> match = parse('[1, [2, 3], 4]')
+        >>> match = parse('[1, [2, 3], -4]')
         >>> match.pprint()
         value
           array
@@ -368,7 +373,8 @@ class GrammarParser:
               array
                 2
                 3
-            4
+            negative: value
+              4
 
         >>> match.find('array.array')
 
@@ -383,7 +389,19 @@ class GrammarParser:
           array
             2
             3
-        4
+        negative: value
+          4
+
+        >>> for child in match.findall('array.negative:value'): child.pprint()
+        negative: value
+          4
+
+        >>> for child in match.findall('array.:value'): child.pprint()
+        1
+        value
+          array
+            2
+            3
 
     """
 
