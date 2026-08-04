@@ -52,7 +52,12 @@ class Goto(Exception):
 
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
-    r"""Miniature C interpreter
+    r"""Miniature C interpreter, which can use many Python objects and
+    functions directly, and whose objects and functions can be used
+    directly from Python.
+
+    Comes with its own C preprocessor, can parse all of ANSI C, and can
+    run... some C code. It's a work in progress.
 
         >>> minic = MiniC()
 
