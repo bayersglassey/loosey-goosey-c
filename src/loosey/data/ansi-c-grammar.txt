@@ -265,9 +265,8 @@ direct_operator
     ;
 
 direct_declarator
-    | IDENTIFIER
-    | '(' declarator ')'
-    | direct_declarator direct_operator
+    | IDENTIFIER ( direct_operator )*
+    | '(' declarator ')' ( direct_operator )*
     ;
 
 pointer
@@ -384,5 +383,5 @@ function_definition
     ;
 
 translation_unit
-    | external_declaration ( translation_unit )?
+    | external_declaration ( external_declaration )*
     ;

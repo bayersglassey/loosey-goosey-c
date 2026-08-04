@@ -431,7 +431,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('-g', '--grammar', default='src/loosey/data/ansi-c-grammar.txt')
     parser.add_argument('-p', '--print-grammar', default=False, action='store_true')
-    parser.add_argument('-m', '--max-match-depth')
+    parser.add_argument('-m', '--max-match-depth', type=int)
     parser.add_argument('-f', '--filename', default='-')
     parser.add_argument('-r', '--rule-name')
     parser.add_argument('--partial', default=False, action='store_true')
