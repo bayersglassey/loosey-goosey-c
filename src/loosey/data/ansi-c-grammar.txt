@@ -14,33 +14,24 @@
 # - BAG, 2026
 
 primary_expression
-    | IDENTIFIER
-    | CHAR
-    | STRING
-    | NUMBER
+    | ident:    IDENTIFIER
+    | literal:  CHAR
+    | literal:  STRING
+    | literal:  NUMBER
     | '(' expression ')'
     ;
 
 postfix_operator
-    | '[' expression ']'
-    | '(' ( assignment_expression ( ',' assignment_expression )* )? ')'
-    | '.' IDENTIFIER
-    | '->' IDENTIFIER
-    | '++'
-    | '--'
+    | index: '[' expression ']'
+    | call:  '(' ( assignment_expression ( ',' assignment_expression )* )? ')'
+    | dot:   '.' IDENTIFIER
+    | arrow: '->' IDENTIFIER
+    | inc:   '++'
+    | dec:   '--'
     ;
 
 postfix_expression
     | primary_expression ( postfix_operator )*
-    ;
-
-unary_expression
-    | postfix_expression
-    | '++' unary_expression
-    | '--' unary_expression
-    | unary_operator cast_expression
-    | 'sizeof' unary_expression
-    | 'sizeof' '(' type_name ')'
     ;
 
 unary_operator
@@ -52,9 +43,18 @@ unary_operator
     | '!'
     ;
 
+unary_expression
+    | postfix_expression
+    | inc: '++' unary_expression
+    | dec: '--' unary_expression
+    | unary_operator cast_expression
+    | sizeof_expr:  'sizeof' unary_expression
+    | sizeof_type:  'sizeof' '(' type_name ')'
+    ;
+
 cast_expression
     | unary_expression
-    | '(' type_name ')' cast_expression
+    | cast: '(' type_name ')' cast_expression
     ;
 
 multiplicative_operator
@@ -144,8 +144,8 @@ assignment_operator
     ;
 
 assignment_expression
-    | conditional_expression
     | unary_expression assignment_operator assignment_expression
+    | conditional_expression
     ;
 
 expression
@@ -161,18 +161,27 @@ declaration
     | declaration_specifiers init_declarator_list ';'
     ;
 
+declaration_specifier
+    | storage_class_specifier
+    | type_specifier
+    | type_qualifier
+    ;
+
 declaration_specifiers
-    | storage_class_specifier ( declaration_specifiers )?
-    | type_specifier ( declaration_specifiers )?
-    | type_qualifier ( declaration_specifiers )?
+    | declspec: declaration_specifier ( declaration_specifier )*
+    ;
+
+# NOTE: this is its own rule, to make sure it always generates a ParseMatch
+equals
+    | '='
+    ;
+
+init_declarator
+    | declarator ( equals initializer )?
     ;
 
 init_declarator_list
     | init_declarator ( ',' init_declarator )*
-    ;
-
-init_declarator
-    | declarator ( '=' initializer )?
     ;
 
 storage_class_specifier
@@ -244,7 +253,7 @@ enumerator_list
     ;
 
 enumerator
-    | IDENTIFIER ( '=' constant_expression )?
+    | IDENTIFIER ( equals constant_expression )?
     ;
 
 type_qualifier
@@ -252,29 +261,33 @@ type_qualifier
     | 'volatile'
     ;
 
-declarator
-    | ( pointer )? direct_declarator
-    ;
-
 direct_operator
-    | '[' constant_expression ']'
-    | '[' ']'
-    | '(' parameter_type_list ')'
-    | '(' identifier_list ')'
-    | '(' ')'
+    | array:   '[' ( constant_expression )? ']'
+    | params:  '(' parameter_type_list ')'
+    | params:  '(' identifier_list ')'
+    | params:  '(' ')'
     ;
 
 direct_declarator
-    | IDENTIFIER ( direct_operator )*
-    | '(' declarator ')' ( direct_operator )*
+    | declare: IDENTIFIER
+    | '(' declarator ')'
     ;
 
 pointer
-    | '*' ( type_qualifier )* ( pointer )?
+    | pointer: '*' ( type_qualifier )* ( pointer )?
+    ;
+
+declarator
+    | ( pointer )? direct_declarator ( direct_operator )*
+    ;
+
+# NOTE: this is its own rule, to make sure it always generates a ParseMatch
+ellipsis
+    | '...'
     ;
 
 parameter_type_list
-    | parameter_list ( ',' '...' )?
+    | parameter_list ( ',' ellipsis )?
     ;
 
 parameter_list
@@ -301,15 +314,9 @@ abstract_declarator
     ;
 
 direct_abstract_declarator
-    | '(' abstract_declarator ')'
-    | '[' ']'
-    | '[' constant_expression ']'
-    | direct_abstract_declarator '[' ']'
-    | direct_abstract_declarator '[' constant_expression ']'
-    | '(' ')'
-    | '(' parameter_type_list ')'
-    | direct_abstract_declarator '(' ')'
-    | direct_abstract_declarator '(' parameter_type_list ')'
+    | params: '(' abstract_declarator ')'
+    | array:  ( direct_abstract_declarator )? '[' ( constant_expression )? ']'
+    | params: ( direct_abstract_declarator )? '(' ( parameter_type_list )? ')'
     ;
 
 initializer
@@ -331,15 +338,13 @@ statement
     ;
 
 labeled_statement
-    | IDENTIFIER ':' statement
-    | 'case' constant_expression ':' statement
-    | 'default' ':' statement
+    | label:    IDENTIFIER ':' statement
+    | case:     'case' constant_expression ':' statement
+    | default:  'default' ':' statement
     ;
 
 compound_statement
-    | '{' '}'
-    | '{' statement_list '}'
-    | '{' declaration_list ( statement_list )? '}'
+    | block:  '{' ( declaration_list )? ( statement_list )? '}'
     ;
 
 declaration_list
@@ -354,23 +359,26 @@ expression_statement
     | ( expression )? ';'
     ;
 
+else_statement
+    | else:  'else' statement
+    ;
+
 selection_statement
-    | 'if' '(' expression ')' statement ( 'else' statement )?
-    | 'switch' '(' expression ')' statement
+    | if:      'if' '(' expression ')' statement ( else_statement )?
+    | switch:  'switch' '(' expression ')' statement
     ;
 
 iteration_statement
-    | 'while' '(' expression ')' statement
-    | 'do' statement 'while' '(' expression ')' ';'
-    | 'for' '(' expression_statement expression_statement ( expression )? ')' statement
+    | while:  'while' '(' expression ')' statement
+    | do:     'do' statement 'while' '(' expression ')' ';'
+    | for:    'for' '(' expression_statement expression_statement ( expression )? ')' statement
     ;
 
 jump_statement
-    | 'goto' IDENTIFIER ';'
-    | 'continue' ';'
-    | 'break' ';'
-    | 'return' ';'
-    | 'return' expression ';'
+    | goto:      'goto' IDENTIFIER ';'
+    | continue:  'continue' ';'
+    | break:     'break' ';'
+    | return:    'return' ( expression )? ';'
     ;
 
 external_declaration

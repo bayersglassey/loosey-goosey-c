@@ -794,7 +794,7 @@ class Preprocessor:
         first_token = tokens[0]
         directive = tokens[1].value
         if len(tokens) < 3:
-            raise ParseError(first_token, "Missing conditional expression for #{directive}")
+            raise ParseError(first_token, f"Missing conditional expression for #{directive}")
 
         # Prepare an iterator of tokens starting at the conditional expression
         tokens_it = iter(tokens)

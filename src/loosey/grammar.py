@@ -148,7 +148,7 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
                 pattern_parts = []
                 pattern_stack = []
             elif c == ';':
-                raise error("Rule has no patterns: {rule.name}")
+                raise error(f"Rule has no patterns: {rule.name}")
             else:
                 raise unexpected(token)
         else:
@@ -252,12 +252,17 @@ class ParseMatch(NamedTuple):
         else:
             print(prefix + self.token.value)
 
+    @property
+    def spec(self) -> str:
+        return f"{self.pattern_name or ''}:{self.rule_name}"
+
     def find(self, spec: str) -> Optional['ParseMatch']:
         matches = self.findall(spec)
         return matches[0] if matches else None
 
     def findall(self, spec: str) -> list['ParseMatch']:
-        parts = [] if not spec else spec.split('.')
+        # TODO: implement regex-like operators, like '*' and '?'
+        parts = [] if not spec else spec.split(' ')
         matches = [self]
         for part in parts:
             if ':' in part:
@@ -266,14 +271,16 @@ class ParseMatch(NamedTuple):
                     pattern_name = None
             else:
                 rule_name = part
-                pattern_name = '*'
+                pattern_name = '.'
+            if not rule_name:
+                raise Exception(f"Bad part (no rule name): {part!r}")
             old_matches = matches
             matches = []
             for match in old_matches:
                 for child in match.children:
                     if (
-                        (rule_name == '*' or child.rule_name == rule_name) and
-                        (pattern_name == '*' or child.pattern_name == pattern_name)
+                        (rule_name == '.' or child.rule_name == rule_name) and
+                        (pattern_name == '.' or child.pattern_name == pattern_name)
                     ):
                         matches.append(child)
         return matches
@@ -376,14 +383,14 @@ class GrammarParser:
             negative: value
               4
 
-        >>> match.find('array.array')
+        >>> match.find('array array')
 
-        >>> match.find('array.value.array').pprint()
+        >>> match.find('array value array').pprint()
         array
           2
           3
 
-        >>> for child in match.findall('array.value'): child.pprint()
+        >>> for child in match.findall('array value'): child.pprint()
         1
         value
           array
@@ -392,11 +399,11 @@ class GrammarParser:
         negative: value
           4
 
-        >>> for child in match.findall('array.negative:value'): child.pprint()
+        >>> for child in match.findall('array negative:value'): child.pprint()
         negative: value
           4
 
-        >>> for child in match.findall('array.:value'): child.pprint()
+        >>> for child in match.findall('array :value'): child.pprint()
         1
         value
           array
@@ -706,7 +713,9 @@ class GrammarEvaluator:
 
     def default(self, match: ParseMatch):
         # NOTE: subclasses probably want to override this method
-        raise ParseError(match.token, "Don't know how to evaluate: {match.token.prettystring()}")
+        raise ParseError(match.token,
+            f"Don't know how to evaluate {match.spec} "
+            f"(maybe implement {self.get_handler_name(match.rule_name, match.pattern_name)})")
 
     def on(self, match: ParseMatch):
         handler_name = self.get_handler_name(match.rule_name, match.pattern_name)
