@@ -292,7 +292,7 @@ _MatchResult = tuple[list[ParseMatch], int]
 
 
 class GrammarParser:
-    """
+    """A parser for the grammar specified by rules given to the constructor.
 
         >>> rules = parse_rules('''
         ...
