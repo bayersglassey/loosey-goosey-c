@@ -7,3 +7,4 @@ scratch.py
 *.egg-info
 dist/
 build/
+a.out
