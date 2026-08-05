@@ -27,7 +27,7 @@ from loosey.pplex import (
 )
 from loosey.ppexpr import ConditionalExpressionEvaluator
 from loosey.recursion import debug_recursion, debug_recursion_log
-from loosey.grammar import GrammarEvaluator
+from loosey.grammar import GrammarEvaluator, ParseMatch
 
 
 class ConditionalFrame(NamedTuple):
@@ -1370,6 +1370,11 @@ class GrammarEvaluatorWithPreprocessor(GrammarEvaluator):
             return list(self.pp.process(lines))
         else:
             return list(self.pp.process_line(tokens))
+
+    def parse_from_file(self, filename: str, **kwargs) -> Optional[ParseMatch]:
+        lines = tokenize_file(filename)
+        tokens = list(self.pp.process(lines))
+        return self.parse(tokens, **kwargs)
 
 
 if __name__ == '__main__':

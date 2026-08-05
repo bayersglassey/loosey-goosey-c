@@ -85,6 +85,25 @@
         encounter a typedef, and add a callback to the parser for the
         TYPE_NAME pseudo-toktype
 
-    [ ] Attempting to parse the following results in RecursionError:
+    [ ] When evaluated, typedefs should be persisted somewhere
+        [ ] More generally, we should figure out the 4 namespaces:
+            https://www.spinellis.gr/cscout/doc/name.html
+            * Tags for a struct/union/enum
+            * Members of struct/union (actually a separate namespace is assigned to each struct/union)
+            * Labels
+            * Ordinary identifiers (termed objects in the C standard)
+            ...see also: notes/namespaces.txt
+
+    [ ] Support multiple call stacks!.. just in case we ever want to have
+        threads etc.
+        I think we would need to factor CallStack out of MiniC, and CallStack
+        should be a GrammarEvaluator... maybe?
+        But some parts of MiniC should presumably stay centralized, like
+        the preprocessor (and therefore parsing?) and globals and stuff.
+        So... what's in CallStack, then?.. minic.scopes, get_var, set_var...
+
+    [ ] Attempting to parse any of the following results in RecursionError:
 
             int x(int);
+
+            ((void *)0)

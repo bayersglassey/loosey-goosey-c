@@ -1,0 +1,72 @@
+
+We should figure out the... 4?.. namespaces:
+functions, variables, tags, and the other thing?..
+https://www.spinellis.gr/cscout/doc/name.html
+
+    * Tags for a struct/union/enum
+    * Members of struct/union (actually a separate namespace is assigned to each struct/union)
+    * Labels
+    * Ordinary identifiers (termed objects in the C standard)
+
+NO WAY, this totally compiles with gcc!..
+
+    struct t {
+        int x;
+    };
+
+    int main() {
+        struct t {
+            float d;
+        };
+        return 0;
+    }
+
+...so yeah, we get a fresh namespace (or quadruple namespace)
+for every {...}.
+So let's maybe have a Python namedtuple, with dicts for the 4
+kinds of name, and then have a stack of this kind of namedtuple.
+
+BUT NO!.. because labels are definitely per-function:
+
+    int main() {
+        goto x;
+        {
+            x: 1 + 2; // note: previous definition of 'x' with type 'void'
+        }
+        x: return 0; // error: duplicate label 'x'
+    }
+
+Also, things are complicated further, because this is fine:
+
+    struct t {
+        int x;
+    };
+
+    // warning: 'struct t' declared inside parameter list will not
+    // be visible outside of this definition or declaration
+    int f(struct t { float d; } t) { return 0; }
+
+...but this is not:
+
+    // error: redefinition of 'struct t'
+    int f(struct t { float d; } t, struct t { int x; } t2) { return 0; }
+
+...SO IT'S NOT EVEN JUST INSIDE {...}, IT'S ALSO INSIDE (...).
+SOMETIMES.
+
+    int main() {
+        struct t { int x; };
+        ( struct t { double d; } ); // error: redefinition of 'struct t'
+        return 0;
+    }
+
+Okay. So let's *NOT* have a single namedtuple with all 4 namespaces in it.
+However, it seems like typedefs, functions, and variables can definitely
+all live together.
+Enum constants too!..
+
+    enum e {
+        X // note: previous definition of 'X' with type 'enum e'
+    };
+
+    int X; // error: 'X' redeclared as different kind of symbol

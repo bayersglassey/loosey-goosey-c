@@ -1,6 +1,6 @@
 from typing import Optional
 
-from loosey import get_data_filename
+from loosey import get_data_filepath
 from loosey.pplex import (
     Token,
     Lexer,
@@ -13,7 +13,7 @@ from loosey.grammar import (
 )
 
 
-GRAMMAR_FILENAME = get_data_filename('ppexpr-grammar.txt')
+GRAMMAR_FILENAME = get_data_filepath('ppexpr-grammar.txt')
 
 
 SINGLE_OPS = {

@@ -1,5 +1,6 @@
 import re
 import os
+import sys
 from argparse import ArgumentParser
 from typing import (
     Literal,
@@ -12,6 +13,7 @@ from typing import (
 from string import ascii_lowercase, ascii_uppercase
 from functools import cached_property, lru_cache
 
+from loosey import get_data_filepath
 from loosey.pplex import Token, Lexer, ParseError, tokenize_file
 
 
@@ -556,11 +558,10 @@ class GrammarParser:
         self.main_rule_name = main_rule_name
 
         self.match_depth = 0
+        self.matching: set[ParseMatchKey] = set()
         self.match_cache: dict[ParseMatchKey, Optional[ParseMatch]] = {}
 
     def match(self) -> Optional[ParseMatch]:
-        if self.main_rule_name is None:
-            raise Exception("No main rule")
         return self.match_rule(self.main_rule_name, full=True)
 
     def increase_match_depth(self):
@@ -568,7 +569,14 @@ class GrammarParser:
         if self.max_match_depth is not None and self.match_depth >= self.max_match_depth:
             raise Exception(f"Exceeded max match depth: {self.max_match_depth}")
 
-    def match_rule(self, rule_name: str, token_i: int = 0, *, full: bool = False) -> Optional[ParseMatch]:
+    def decrease_match_depth(self):
+        self.match_depth -= 1
+
+    def match_rule(self, rule_name: Optional[str], token_i: int = 0, *, full: bool = False) -> Optional[ParseMatch]:
+        if rule_name is None:
+            if self.main_rule_name is None:
+                raise Exception("No main rule")
+            rule_name = self.main_rule_name
         if self.verbose:
             print('. ' * self.match_depth + f"RULE: {rule_name}")
         rule = self.rules[rule_name]
@@ -588,7 +596,7 @@ class GrammarParser:
             # No patterns matched, so the rule doesn't match!
             return None
         finally:
-            self.match_depth -= 1
+            self.decrease_match_depth()
 
     def match_pattern(self, rule_name: str, pattern_i: int, token_i: int) -> Optional[ParseMatch]:
         rule = self.rules[rule_name]
@@ -614,6 +622,9 @@ class GrammarParser:
             return cached(None)
 
         token = self.tokens[token_i]
+
+        if cache_key in self.matching:
+            raise ParseError(token, f"Circular match: {pattern.name or ''}:{rule_name}")
 
         # Recursively match the pattern and its subpatterns
         def match_subpattern(subpattern: GrammarPattern, token_i: int) -> Optional[_MatchResult]:
@@ -661,7 +672,7 @@ class GrammarParser:
                             return None
                         token = self.tokens[token_i]
                         if self.verbose:
-                            print('. ' * self.match_depth + f"TOKEN: {token.value!r}")
+                            print('. ' * self.match_depth + f"TOKEN: {token.location()}: {token.value!r}")
                         if part_type == 'toktype':
                             # Match against token's toktype
                             toktype_predicate = self.toktype_predicates.get(part_value)
@@ -689,7 +700,7 @@ class GrammarParser:
                     print('. ' * self.match_depth + f"{thing} MATCHED!")
                 return children, token_i
             finally:
-                self.match_depth -= 1
+                self.decrease_match_depth()
 
         # HACK: maybe kick off some arbitrary code when we enter/exit the
         # rule.
@@ -703,6 +714,7 @@ class GrammarParser:
         original_token_i = token_i
         if enter_callback is not None:
             enter_callback(token)
+        self.matching.add(cache_key)
         match = None
         try:
             result = match_subpattern(pattern, token_i)
@@ -731,6 +743,7 @@ class GrammarParser:
                 ))
             return match
         finally:
+            self.matching.remove(cache_key)
             if exit_callback is not None:
                 exit_callback(token, match)
 
@@ -800,18 +813,28 @@ class GrammarEvaluator:
             f'on_{pattern_name}__{rule_name}' if pattern_name
             else f'on_{rule_name}')
 
+    def get_unimplemented_handlers(self) -> list[str]:
+        # NOTE: use a dict to remove duplicates (unlike list) while
+        # preserving order (unlike set)
+        possible_handler_names = {
+            self.get_handler_name(rule_name, pattern.name): True
+            for rule_name, rule in self.grammar_rules.items()
+            for pattern in rule.patterns}
+        return [name for name in possible_handler_names
+            if not hasattr(self, name)]
+
     def validate(self):
-        bad_method_names = []
-        possible_method_names = {
+        bad_handler_names = []
+        possible_handler_names = {
             self.get_handler_name(rule_name, pattern.name)
             for rule_name, rule in self.grammar_rules.items()
             for pattern in rule.patterns}
         for attr in dir(self):
             if attr.startswith('on_'):
-                if attr not in possible_method_names:
-                    bad_method_names.append(attr)
-        if bad_method_names:
-            raise Exception(f"Handler methods for missing rules/patterns: {', '.join(bad_method_names)}")
+                if attr not in possible_handler_names:
+                    bad_handler_names.append(attr)
+        if bad_handler_names:
+            raise Exception(f"Handler methods for missing rules/patterns: {', '.join(bad_handler_names)}")
 
     @cached_property
     def grammar_rules(self) -> dict[str, GrammarRule]:
@@ -829,17 +852,29 @@ class GrammarEvaluator:
                 for token in line]
         return tokens
 
-    def parse(self, tokens: list[Token] | str, rule_name: Optional[str] = None) -> Optional[ParseMatch]:
+    def parse(
+            self,
+            tokens: list[Token] | str,
+            rule_name: Optional[str] = None,
+            *,
+            verbose: bool = False,
+            partial: bool = False,
+            max_match_depth: Optional[int] = None,
+            ) -> Optional[ParseMatch]:
         tokens = self.coerce_tokens(tokens)
         parser = GrammarParser(
             self.grammar_rules,
             tokens,
-            main_rule_name=rule_name or self.main_rule_name,
             squash_children=self.squash_children,
             pattern_callbacks=self.pattern_callbacks,
             toktype_predicates=self.toktype_predicates,
+            verbose=verbose,
+            max_match_depth=max_match_depth,
         )
-        return parser.match()
+        return parser.match_rule(
+            rule_name or self.main_rule_name,
+            full=not partial,
+        )
 
     def no_match(self, tokens: list[Token], rule_name: str) -> Optional[ParseMatch]:
         # NOTE: subclasses may want to override this method with custom
@@ -868,6 +903,11 @@ class GrammarEvaluator:
             return handler(match)
         else:
             return self.default(match)
+
+
+def get_grammar_filenames():
+    return [os.path.relpath(get_data_filepath(filename))
+        for filename in os.listdir(get_data_filepath())]
 
 
 def main():

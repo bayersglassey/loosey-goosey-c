@@ -1,15 +1,33 @@
-from typing import Any, Optional
+from typing import Any, Optional, NamedTuple
 from contextlib import contextmanager
+from argparse import ArgumentParser
 
-from loosey import get_data_filename
+from loosey import get_data_filepath
 from loosey.grammar import ParseMatch
 from loosey.pplex import Token, ParseError
 from loosey.pp import GrammarEvaluatorWithPreprocessor
 
 
-GRAMMAR_FILENAME = get_data_filename('ansi-c-grammar.txt')
+GRAMMAR_FILENAME = get_data_filepath('ansi-c-grammar.txt')
 
 Value = Any
+
+
+class Type(NamedTuple):
+    match: ParseMatch
+
+
+class TagDefinitionField(NamedTuple):
+    name: str
+
+
+class TagDefinition(NamedTuple):
+    kind: str # 'struct' or 'union'
+    name: str
+    fields: list[TagDefinitionField]
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({self.kind!r}, {self.name!r}, {len(self.fields)} fields)'
 
 
 class Function:
@@ -19,7 +37,7 @@ class Function:
         self.body = body
         self.minic = minic
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.name}({', '.join(self.params)})"
 
     def __call__(self, *args) -> Value:
@@ -106,6 +124,19 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
               pointer: *
               declare: x
 
+        >>> minic.parse('struct T { int x; int y; };').pprint()
+        declspec: declaration_specifiers
+          struct_or_union_specifier
+            struct
+            T
+            struct_declaration_list
+              struct_declaration
+                int
+                declare: x
+              struct_declaration
+                int
+                declare: y
+
     """
 
     grammar_filename = GRAMMAR_FILENAME
@@ -114,8 +145,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.globals = {}
-        self.scopes = [self.globals]
+
+        self.globals: dict[str, Value] = {}
+
+        # NOTE: this is essentially the "call stack" used during evaluation
+        self.scopes: list[dict[str, Value]] = [self.globals]
+
+        self.global_tags: dict[str, TagDefinition] = {}
+        self.tag_scopes: list[dict[str, TagDefinition]] = [{}]
 
         # The rules for parsing C typedefs are awful, because they're not
         # purely based on the structure of the grammar, they're also based
@@ -126,7 +163,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.typedef_blocks: list[set[str]] = []
         self.pattern_callbacks = {
             ('compound_statement', 'block'):
-                (self.enter_parse_block, self.exit_parse_block),
+                (self.enter_typedef_block, self.exit_typedef_block),
+            ('translation_unit', None):
+                (self.enter_typedef_block, self.exit_typedef_block),
             ('declaration', None):
                 (None, self.exit_declaration),
         }
@@ -144,29 +183,20 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             return None
         return super().no_match(tokens, rule_name)
 
-    def parse(self, *args, **kwargs):
-        # Add an initial "typedef block" so typedefs are handled correctly
-        # for the duration of the parse
-        self.typedef_blocks.append(set())
-        try:
-            return super().parse(*args, **kwargs)
-        finally:
-            self.typedef_blocks.pop()
-
-    def enter_parse_block(self, token: Token):
+    def enter_typedef_block(self, token: Token):
         self.typedef_blocks.append(set())
 
-    def exit_parse_block(self, token: Token, match: Optional[ParseMatch]):
+    def exit_typedef_block(self, token: Token, match: Optional[ParseMatch]):
         self.typedef_blocks.pop()
 
     def exit_declaration(self, token: Token, match: Optional[ParseMatch]):
         if match is None:
             return
-        parse_block = self.typedef_blocks[-1]
-        declares = match.findall('.* declare:')
-        for declare in declares:
-            name = declare.token.value
-            parse_block.add(name)
+        if not self.typedef_blocks:
+            return
+        typedef_block = self.typedef_blocks[-1]
+        for child in match.findall('.* declare:'):
+            typedef_block.add(child.token.value)
 
     def is_type_name_token(self, token: Token) -> bool:
         # TODO: also check for typedefs which were previously evaluated,
@@ -174,7 +204,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # all that is tracked by self.typedef_blocks)
         return (
             token.toktype == 'IDENTIFIER'
-            and self.typedef_blocks and token.value in self.typedef_blocks[-1])
+            and self.typedef_blocks and any(
+                token.value in block
+                for block in reversed(self.typedef_blocks)))
 
     @contextmanager
     def new_scope(self) -> dict[str, Value]:
@@ -272,114 +304,22 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         return value
 
 
-def _parse_tests():
-    r"""These doctests are basically tests of ansi-c-grammar.txt, making sure
-    that it can produce reasonable parse trees
+def main():
+    parser = ArgumentParser()
+    parser.add_argument('-f', '--filename', default='-')
+    parser.add_argument('-v', '--verbose', default=False, action='store_true')
+    parser.add_argument('--partial', default=False, action='store_true')
+    args = parser.parse_args()
 
-        >>> minic = MiniC()
+    minic = MiniC()
+    match = minic.parse_from_file(
+        args.filename,
+        verbose=args.verbose,
+        partial=args.partial,
+    )
+    if match:
+        match.pprint()
 
-        >>> minic.parse('int x = 2 * 3 + 4;').pprint()
-        declaration
-          declspec: declaration_specifiers
-            int
-          init_declarator
-            declare: x
-            =
-            additive_expression
-              multiplicative_expression
-                literal: 2
-                *
-                literal: 3
-              +
-              literal: 4
 
-        >>> minic.parse('int x, x = 1, *x = &x;').pprint()
-        declaration
-          declspec: declaration_specifiers
-            int
-          init_declarator_list
-            declare: x
-            init_declarator
-              declare: x
-              =
-              literal: 1
-            init_declarator
-              declarator
-                pointer: *
-                declare: x
-              =
-              unary_expression
-                &
-                ident: x
-
-        >>> minic.parse('int add(int x, int y) { return x + y; }').pprint()
-        function_definition
-          declspec: declaration_specifiers
-            int
-          declarator
-            declare: add
-            params: direct_operator
-              parameter_list
-                parameter_declaration
-                  declspec: declaration_specifiers
-                    int
-                  declare: x
-                parameter_declaration
-                  declspec: declaration_specifiers
-                    int
-                  declare: y
-          block: compound_statement
-            return: jump_statement
-              additive_expression
-                ident: x
-                +
-                ident: y
-
-        >>> minic.parse(r'''
-        ...     void hello(int n, const char *name) {
-        ...         int i;
-        ...         for(i = 0; i < n; i++) printf("Hello, %s!\n", name);
-        ...     }
-        ... ''').pprint()
-        function_definition
-          declspec: declaration_specifiers
-            void
-          declarator
-            declare: hello
-            params: direct_operator
-              parameter_list
-                parameter_declaration
-                  declspec: declaration_specifiers
-                    int
-                  declare: n
-                parameter_declaration
-                  declspec: declaration_specifiers
-                    const
-                    char
-                  declarator
-                    pointer: *
-                    declare: name
-          block: compound_statement
-            declaration
-              declspec: declaration_specifiers
-                int
-              declare: i
-            for: iteration_statement
-              assignment_expression
-                ident: i
-                =
-                literal: 0
-              relational_expression
-                ident: i
-                <
-                ident: n
-              postfix_expression
-                ident: i
-                inc: ++
-              postfix_expression
-                ident: printf
-                call: postfix_operator
-                  literal: "Hello, %s!\n"
-                  ident: name
-
-    """
+if __name__ == '__main__':
+    main()

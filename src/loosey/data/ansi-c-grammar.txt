@@ -207,9 +207,13 @@ type_specifier
     | TYPE_NAME
     ;
 
+struct_or_union_or_enum_tag
+    | IDENTIFIER
+    ;
+
 struct_or_union_specifier
-    | struct_or_union ( IDENTIFIER )? '{' struct_declaration_list '}'
-    | struct_or_union IDENTIFIER
+    | struct_or_union ( struct_or_union_or_enum_tag )? '{' struct_declaration_list '}'
+    | struct_or_union struct_or_union_or_enum_tag
     ;
 
 struct_or_union
@@ -244,7 +248,7 @@ struct_declarator
     ;
 
 enum_specifier
-    | 'enum' IDENTIFIER ( '{' enumerator_list '}' )?
+    | 'enum' struct_or_union_or_enum_tag ( '{' enumerator_list '}' )?
     | 'enum' '{' enumerator_list '}'
     ;
 
