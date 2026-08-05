@@ -596,7 +596,8 @@ class Preprocessor:
     def execute(self, lines: Iterable[list[Token]] | str, *, finish: bool = True):
         """Process lines of C code for their side effects (i.e. directives)
         alone, e.g. to define macros, include files, etc."""
-        for token in self.process(lines, finish=finish): pass
+        for token in self.process(lines, finish=finish):
+            pass
 
     @debug_recursion()
     def process_line(self, line: list[Token]) -> Iterator[Token]:
@@ -921,7 +922,7 @@ class Preprocessor:
             if directive == 'ifndef':
                 is_true = not is_true
             self.push_conditional(ConditionalFrame(
-                token=first_token,
+                token=first_token.copy_with_parents(parents),
                 directive=directive,
                 was_true=is_true,
             ))

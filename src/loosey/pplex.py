@@ -487,7 +487,6 @@ class Lexer:
             # previous line), figure out if it ends on this line, etc
             block_comment_chopped = 0
             if self.in_multiline_comment:
-                comment_token = tokens[-1]
                 end_index = line.find('*/')
                 if end_index < 0:
                     # The comment continues for this entire line!

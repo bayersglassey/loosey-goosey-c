@@ -3,7 +3,6 @@ from typing import Optional
 from loosey import get_data_filepath
 from loosey.pplex import (
     Token,
-    Lexer,
     ParseError,
     from_char_literal,
 )

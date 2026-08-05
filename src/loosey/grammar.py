@@ -1,6 +1,7 @@
 import re
 import os
 import sys
+from tempfile import NamedTemporaryFile
 from argparse import ArgumentParser
 from typing import (
     Literal,
@@ -9,6 +10,7 @@ from typing import (
     Optional,
     Union,
     Callable,
+    Iterable,
 )
 from string import ascii_lowercase, ascii_uppercase
 from functools import cached_property, lru_cache
@@ -37,27 +39,37 @@ class GrammarPattern(NamedTuple):
     name: Optional[str]
     parts: list[GrammarPatternPart]
 
+    def prettystring(self) -> str:
+        s_parts = []
+        if self.name:
+            s_parts.append(f'{self.name}:')
+        def visit(pattern):
+            for part_type, part_value in pattern.parts:
+                if part_type == 'tokvalue':
+                    s_parts.append(repr(part_value))
+                elif part_type == 'maybe':
+                    s_parts.append('(')
+                    visit(part_value)
+                    s_parts.append(')?')
+                elif part_type == 'star':
+                    s_parts.append('(')
+                    visit(part_value)
+                    s_parts.append(')*')
+                else:
+                    s_parts.append(part_value)
+        visit(self)
+        return ' '.join(s_parts)
 
-def pattern_to_string(pattern: GrammarPattern) -> str:
-    s_parts = []
-    if pattern.name:
-        s_parts.append(f'{pattern.name}:')
-    def visit(pattern):
-        for part_type, part_value in pattern.parts:
-            if part_type == 'tokvalue':
-                s_parts.append(repr(part_value))
-            elif part_type == 'maybe':
-                s_parts.append('(')
-                visit(part_value)
-                s_parts.append(')?')
-            elif part_type == 'star':
-                s_parts.append('(')
-                visit(part_value)
-                s_parts.append(')*')
-            else:
-                s_parts.append(part_value)
-    visit(pattern)
-    return ' '.join(s_parts)
+    def downstream_rules(self) -> list[str]:
+        downstream_rules = []
+        def visit(pattern):
+            for part_type, part_value in pattern.parts:
+                if part_type == 'rule':
+                    downstream_rules.append(part_value)
+                elif part_type in ('maybe', 'star'):
+                    visit(part_value)
+        visit(self)
+        return downstream_rules
 
 
 class GrammarRule(NamedTuple):
@@ -67,8 +79,14 @@ class GrammarRule(NamedTuple):
     def pprint(self):
         print(self.name)
         for i, pattern in enumerate(self.patterns):
-            print('    | ' + pattern_to_string(pattern))
+            print('    | ' + pattern.prettystring())
         print('    ;')
+
+    def downstream_rules(self) -> list[str]:
+        downstream_rules = []
+        for pattern in self.patterns:
+            downstream_rules.extend(pattern.downstream_rules())
+        return downstream_rules
 
 
 class GrammarParseError(Exception):
@@ -105,6 +123,25 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
         array
             | '[' ( value ( ',' value )* )? ']'
             ;
+
+        >>> print_rule_graph(rules)
+        digraph {
+          rankdir = "LR";
+          "value" [label="RULE: value"];
+          "value.0" [label="PAT value[0]: NUMBER"];
+          "value" -> "value.0";
+          "value.1" [label="PAT value[1]: negative: '-' value"];
+          "value" -> "value.1";
+          "value.2" [label="PAT value[2]: array"];
+          "value" -> "value.2";
+          "array" [label="RULE: array"];
+          "array.0" [label="PAT array[0]: '[' ( value ( ',' value )* )? ']'"];
+          "array" -> "array.0";
+          "value.1" -> "value";
+          "value.2" -> "array";
+          "array.0" -> "value";
+          "array.0" -> "value";
+        }
 
     """
     rules = {}
@@ -220,6 +257,84 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
     if rule is not None:
         raise error(f"Unterminated rule: {rule.name}")
     return rules
+
+
+def get_reachable_rules(rules: dict[str, GrammarRule], from_rules: Iterable[str]) -> set[str]:
+    if isinstance(from_rules, str):
+        from_rules = [from_rules]
+    rules_to_visit = set(from_rules)
+    visited_rules = set()
+    while rules_to_visit:
+        rule_name = rules_to_visit.pop()
+        visited_rules.add(rule_name)
+        rule = rules[rule_name]
+        for other_rule_name in rule.downstream_rules():
+            if other_rule_name not in visited_rules:
+                rules_to_visit.add(other_rule_name)
+    return visited_rules
+
+
+def get_rule_graph(rules: dict[str, GrammarRule], *, from_rules: Iterable[str] = ()) -> list[str]:
+    if from_rules:
+        rules = {name: rules[name]
+            for name in get_reachable_rules(rules, from_rules)}
+    lines = []
+    lines.append('digraph {')
+    lines.append('  rankdir = "LR";')
+    def escape(s: str) -> str:
+        """Escape a string for use in Graphviz's DOT syntax"""
+        return ('"' + s
+            .replace('\n', r'\n')
+            .replace('\\', r'\\')
+            .replace('"', r'\"')
+        + '"')
+    def get_rule_node(rule_name) -> str:
+        return escape(rule_name)
+    def get_pattern_node(rule_name, pattern_i) -> str:
+        return escape(f'{rule_name}.{pattern_i}')
+    for rule_name, rule in rules.items():
+        rule_node = get_rule_node(rule_name)
+        label = f"RULE: {rule_name}"
+        lines.append(f'  {rule_node} [label={escape(label)}];')
+        for pattern_i, pattern in enumerate(rule.patterns):
+            pattern_node = get_pattern_node(rule_name, pattern_i)
+            label = f'PAT {rule_name}[{pattern_i}]: {pattern.prettystring()}'
+            lines.append(f'  {pattern_node} [label={escape(label)}];')
+            lines.append(f'  {rule_node} -> {pattern_node};')
+    for rule_name, rule in rules.items():
+        rule_node = get_rule_node(rule_name)
+        for pattern_i, pattern in enumerate(rule.patterns):
+            pattern_node = get_pattern_node(rule_name, pattern_i)
+            for other_rule_name in pattern.downstream_rules():
+                other_rule_node = get_rule_node(other_rule_name)
+                lines.append(f'  {pattern_node} -> {other_rule_node};')
+    lines.append('}')
+    return lines
+
+
+def print_rule_graph(rules: dict[str, GrammarRule], **kwargs):
+    for line in get_rule_graph(rules, **kwargs):
+        print(line)
+
+
+def render_rule_graph(
+        rules: dict[str, GrammarRule],
+        *,
+        ext='svg',
+        view=True,
+        viewer='xdg-open',
+        **kwargs):
+    with NamedTemporaryFile('w', delete=False) as file:
+        print(f"=== Writing graph to: {file.name}")
+        for line in get_rule_graph(rules, **kwargs):
+            file.write(line)
+            file.write('\n')
+    ofile = f'{file.name}.{ext}'
+    print(f"=== Rendering graph to: {ofile}")
+    os.system(f'dot -T{ext} {file.name} -o {ofile}')
+    if view:
+        print(f"=== Opening: {ofile}")
+        os.system(f'{viewer} {ofile}')
 
 
 class ParseMatchKey(NamedTuple):
@@ -602,7 +717,7 @@ class GrammarParser:
         rule = self.rules[rule_name]
         pattern = rule.patterns[pattern_i]
         if self.verbose:
-            print('. ' * self.match_depth + f"PATTERN {pattern_i}: {pattern_to_string(pattern)}")
+            print('. ' * self.match_depth + f"PATTERN {pattern_i}: {pattern.prettystring()}")
 
         # If we already have a cached result, just return that
         cache_key = (rule_name, pattern_i, token_i)
@@ -648,7 +763,7 @@ class GrammarParser:
                     elif part_type == 'maybe':
                         # Zero or one matches of subpattern
                         if self.verbose:
-                            print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {pattern_to_string(part_value)}")
+                            print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {part_value.prettystring()}")
                         result = match_subpattern(part_value, token_i)
                         if result:
                             sub_children, token_i = result
@@ -656,7 +771,7 @@ class GrammarParser:
                     elif part_type == 'star':
                         # Zero or more matches of subpattern
                         if self.verbose:
-                            print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {pattern_to_string(part_value)}")
+                            print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {part_value.prettystring()}")
                         while True:
                             result = match_subpattern(part_value, token_i)
                             if result:
