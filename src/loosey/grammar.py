@@ -673,7 +673,7 @@ class GrammarParser:
         self.main_rule_name = main_rule_name
 
         self.match_depth = 0
-        self.matching: set[ParseMatchKey] = set()
+        self.match_stack: list[ParseMatchKey] = []
         self.match_cache: dict[ParseMatchKey, Optional[ParseMatch]] = {}
 
     def match(self) -> Optional[ParseMatch]:
@@ -738,8 +738,13 @@ class GrammarParser:
 
         token = self.tokens[token_i]
 
-        if cache_key in self.matching:
-            raise ParseError(token, f"Circular match: {pattern.name or ''}:{rule_name}")
+        if cache_key in self.match_stack:
+            cache_key_index = self.match_stack.index(cache_key)
+            msg = ' -> '.join(
+                f"{self.rules[rule_name].patterns[pattern_i].name or ''}:{rule_name}"
+                for rule_name, pattern_i, token_i
+                in self.match_stack[cache_key_index:])
+            raise ParseError(token, f"Circular match: {msg}")
 
         # Recursively match the pattern and its subpatterns
         def match_subpattern(subpattern: GrammarPattern, token_i: int) -> Optional[_MatchResult]:
@@ -829,7 +834,7 @@ class GrammarParser:
         original_token_i = token_i
         if enter_callback is not None:
             enter_callback(token)
-        self.matching.add(cache_key)
+        self.match_stack.append(cache_key)
         match = None
         try:
             result = match_subpattern(pattern, token_i)
@@ -858,7 +863,7 @@ class GrammarParser:
                 ))
             return match
         finally:
-            self.matching.remove(cache_key)
+            assert self.match_stack.pop() == cache_key
             if exit_callback is not None:
                 exit_callback(token, match)
 

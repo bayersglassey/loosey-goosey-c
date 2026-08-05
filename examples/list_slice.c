@@ -1,9 +1,10 @@
 // From examples/listobject.pp.c
 
-#define __extension__(...)
+#define __extension__(...) 0
 
 typedef void
     PyListObject,
+    PyTupleObject,
     Py_ssize_t,
     PyObject,
     size_t
@@ -17,7 +18,6 @@ list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
     PyObject **item;
     PyObject **vitem = ((void *)0);
     PyObject *v_as_SF = ((void *)0);
-    /*
     Py_ssize_t n;
     Py_ssize_t norig;
     Py_ssize_t d;
@@ -39,7 +39,19 @@ list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
         if(v_as_SF == ((void *)0))
             goto Error;
         n = (PyType_HasFeature((Py_TYPE(((PyObject*)((v_as_SF))))), ((1UL << 25))) ? PyList_GET_SIZE(((PyObject*)((v_as_SF)))) : PyTuple_GET_SIZE(((PyObject*)((v_as_SF)))));
-        vitem = (PyType_HasFeature((Py_TYPE(((PyObject*)((v_as_SF))))), ((1UL << 25))) ? ((PyListObject *)(v_as_SF))->ob_item : ((PyTupleObject *)(v_as_SF))->ob_item);
+        vitem = (
+            PyType_HasFeature(
+                (
+                    Py_TYPE(
+                        (
+                            (PyObject*)((v_as_SF))
+                        )
+                    )
+                ),
+                ((1UL << 25))
+            ) ? ((PyListObject *)(v_as_SF))->ob_item
+            : ((PyTupleObject *)(v_as_SF))->ob_item
+        );
     }
     if (ilow < 0)
         ilow = 0;
@@ -50,7 +62,10 @@ list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
     else if (ihigh > Py_SIZE(((PyObject*)((a)))))
         ihigh = Py_SIZE(((PyObject*)((a))));
     norig = ihigh - ilow;
-    ((void) sizeof ((norig >= 0) ? 1 : 0), __extension__ ({ if (norig >= 0) ; else __assert_fail ("norig >= 0", "/home/bag/repos/cpython/Objects/listobject.c", 672, __extension__ __PRETTY_FUNCTION__); }));
+    ((void) sizeof ((norig >= 0) ? 1 : 0), __extension__ ({
+        if (norig >= 0) ; else __assert_fail ("norig >= 0", "/home/bag/repos/cpython/Objects/listobject.c", 672, __extension__ __PRETTY_FUNCTION__);
+    }));
+    /*
     d = n - norig;
     if (Py_SIZE(((PyObject*)((a)))) + d == 0) {
         Py_XDECREF(((PyObject*)((v_as_SF))));

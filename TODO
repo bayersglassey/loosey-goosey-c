@@ -102,8 +102,23 @@
         the preprocessor (and therefore parsing?) and globals and stuff.
         So... what's in CallStack, then?.. minic.scopes, get_var, set_var...
 
-    [ ] Attempting to parse any of the following results in RecursionError:
-
+    [X] Attempting to parse any of the following results in RecursionError:
             int x(int);
-
             ((void *)0)
+
+    [ ] Attempting to parse this returns None:
+            int x = (int)y;
+
+    [ ] Parsing needs better error messages!..
+        I think we can probably use a concept of "longest/deepest successful
+        partial parse", like assume that was going to be what it was supposed
+        to be...
+
+[ ] Add C99 support!.. where can we find a grammar for it?
+
+[ ] Add support for some GCC extensions, like ({ ... }).
+    And maybe __PRETTY_FUNCTION__.
+    Look through CPython for __extension__ for ideas.
+
+[ ] Look at Yacc's implementation (or any papers on it), see what their
+approach is... backtracking?..

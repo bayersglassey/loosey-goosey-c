@@ -312,15 +312,15 @@ type_name
     | specifier_qualifier_list ( abstract_declarator )?
     ;
 
-abstract_declarator
-    | pointer ( direct_abstract_declarator )?
-    | direct_abstract_declarator
+abstract_declarator_suffix
+    | array:  '[' ( constant_expression )? ']'
+    | params: '(' ( parameter_type_list )? ')'
     ;
 
-direct_abstract_declarator
-    | params: '(' abstract_declarator ')'
-    | array:  ( direct_abstract_declarator )? '[' ( constant_expression )? ']'
-    | params: ( direct_abstract_declarator )? '(' ( parameter_type_list )? ')'
+abstract_declarator
+    | pointer ( abstract_declarator )?
+    | abstract_declarator_suffix ( abstract_declarator_suffix )*
+    | '(' abstract_declarator ')'
     ;
 
 initializer
@@ -378,8 +378,12 @@ iteration_statement
     | for:    'for' '(' expression_statement expression_statement ( expression )? ')' statement
     ;
 
+label
+    | IDENTIFIER
+    ;
+
 jump_statement
-    | goto:      'goto' IDENTIFIER ';'
+    | goto:      'goto' label ';'
     | continue:  'continue' ';'
     | break:     'break' ';'
     | return:    'return' ( expression )? ';'
