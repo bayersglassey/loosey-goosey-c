@@ -125,6 +125,10 @@
           *
           ident: p
 
+    [ ] Handle references correctly (e.g. `x += 1`, `&x`)
+        See: on_assign__assignment_expression, the '+=' case
+        See: MiniC.on_unary_expression, the '&' case
+
     [ ] Support multiple call stacks!.. just in case we ever want to have
         threads etc.
         I think we would need to factor CallStack out of MiniC, and CallStack
@@ -144,6 +148,7 @@
         Added GrammarParser.get_parse_error, but it's not amazing...
 
     [ ] Support conversion to/from bytes
+        See: MiniC.on_cast__cast_expression
 
     [ ] Support strings... [...] should find a NUL byte at the end of Python
         str/bytes objects...

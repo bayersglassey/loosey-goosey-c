@@ -1368,17 +1368,8 @@ class GrammarEvaluatorWithPreprocessor(GrammarEvaluator):
         super().__init__(**kwargs)
         self.pp = Preprocessor()
 
-    def coerce_tokens(self, tokens: list[Token] | str) -> list[Token]:
-        if isinstance(tokens, str):
-            lines = Lexer().tokenize(tokens)
-            return list(self.pp.process(lines))
-        else:
-            return list(self.pp.process_line(tokens))
-
-    def parse_from_file(self, filename: str, **kwargs) -> Optional[ParseMatch]:
-        lines = tokenize_file(filename)
-        tokens = list(self.pp.process(lines))
-        return self.parse(tokens, **kwargs)
+    def coerce_lines(self, lines: list[str]) -> list[Token]:
+        return list(self.pp.process(lines))
 
 
 if __name__ == '__main__':

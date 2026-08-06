@@ -75,7 +75,6 @@ list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
     }
     item = a->ob_item;
     s = norig * sizeof(PyObject *);
-    /*
     if (s) {
         if (s > sizeof(recycle_on_stack)) {
             recycle = (PyObject **)PyMem_Malloc(s);
@@ -117,5 +116,4 @@ list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
         PyMem_Free(recycle);
     Py_XDECREF(((PyObject*)((v_as_SF))));
     return result;
-    */
 }

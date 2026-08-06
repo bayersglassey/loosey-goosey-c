@@ -11,6 +11,7 @@ from typing import (
     Union,
     Callable,
     Iterable,
+    Type,
 )
 from string import ascii_lowercase, ascii_uppercase
 from functools import cached_property, lru_cache
@@ -1029,9 +1030,14 @@ class GrammarEvaluator:
 
     pattern_callbacks: dict[PatternCallbackKey, tuple[PatternEnterCallback, PatternExitCallback]] = None
     toktype_predicates: dict[str, TokenPredicate] = None
+    pass_through_exceptions: tuple[Type[Exception], ...] = ()
 
     def __init__(self):
         self.validate()
+        self._pass_through_exceptions = self.pass_through_exceptions + (ParseError,)
+
+    def warn(self, msg: str):
+        print(f"=== WARNING: {msg}")
 
     @staticmethod
     def get_handler_name(rule_name: str, pattern_name: Optional[str] = None) -> str:
@@ -1069,14 +1075,21 @@ class GrammarEvaluator:
             return parse_rules_from_file(self.grammar_filename)
         raise NotImplementedError("To be implemented by subclasses")
 
-    def coerce_tokens(self, tokens: list[Token] | str) -> list[Token]:
+    def coerce_lines(self, lines: Iterable[str]) -> list[Token]:
         # NOTE: subclasses may want to override this property... for instance,
         # to stick a C preprocessor in front of it ;)
+        return [token for line in lines for token in line]
+
+    def coerce_tokens(self, tokens: list[Token] | str) -> list[Token]:
         if isinstance(tokens, str):
             # Support caller passing us a string, handy for doctests
-            tokens = [token for line in Lexer().tokenize(tokens)
-                for token in line]
+            tokens = self.coerce_lines(Lexer().tokenize(tokens))
         return tokens
+
+    def parse_file(self, filename: str, rule_name: Optional[str] = None, **kwargs) -> Optional[ParseMatch]:
+        lines = tokenize_file(filename)
+        tokens = self.coerce_lines(tokenize_file(filename))
+        return self.parse(tokens, rule_name, **kwargs)
 
     def parse(
             self,
@@ -1110,6 +1123,11 @@ class GrammarEvaluator:
         first_token = tokens[0] if tokens else None
         raise ParseError(first_token, f"Couldn't parse as: {rule_name}")
 
+    def eval_file(self, filename: str, rule_name: Optional[str] = None, **kwargs):
+        lines = tokenize_file(filename)
+        tokens = self.coerce_lines(tokenize_file(filename))
+        return self.eval(tokens, rule_name, **kwargs)
+
     def eval(self, tokens: list[Token] | str, rule_name: Optional[str] = None):
         tokens = self.coerce_tokens(tokens)
         rule_name = rule_name or self.main_rule_name
@@ -1127,10 +1145,15 @@ class GrammarEvaluator:
     def on(self, match: ParseMatch):
         handler_name = self.get_handler_name(match.rule_name, match.pattern_name)
         handler = getattr(self, handler_name, None)
-        if handler is not None:
-            return handler(match)
-        else:
-            return self.default(match)
+        try:
+            if handler is not None:
+                return handler(match)
+            else:
+                return self.default(match)
+        except self._pass_through_exceptions:
+            raise
+        except Exception as ex:
+            raise ParseError(match.token, f"Error handling {match.spec}: {ex}")
 
 
 def get_grammar_filenames():

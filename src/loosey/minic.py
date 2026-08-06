@@ -11,7 +11,20 @@ from loosey.pp import GrammarEvaluatorWithPreprocessor
 
 GRAMMAR_FILENAME = get_data_filepath('ansi-c-grammar.txt')
 
+NO_DEFAULT = object()
+
 Value = Any
+
+
+def value_as_bool(value: Value) -> bool:
+    if value is None:
+        return False
+    elif isinstance(value, (int, float)):
+        return bool(value)
+    else:
+        # E.g. Python strings should be interpreted as `const char *`,
+        # so always truthy, even the empty string!..
+        return True
 
 
 class TypeDef(NamedTuple):
@@ -103,8 +116,10 @@ class MemoryBlock:
     """Behaves like a block of memory in C, i.e. an array of objects.
     Should generally be accessed through a Pointer."""
 
-    def __init__(self):
-        self.entries: dict[int, Value] = {}
+    def __init__(self, value: Value = NO_DEFAULT):
+        if value is NO_DEFAULT:
+            value = Struct()
+        self.entries: dict[int, Value] = {0: value}
         self._update_indexes()
 
         self.freed = False
@@ -409,6 +424,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     grammar_filename = GRAMMAR_FILENAME
     main_rule_name = 'repl_command'
     squash_children = True
+    pass_through_exceptions = (
+        Return,
+        Continue,
+        Break,
+        Goto,
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -475,7 +496,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             name in block for block in reversed(self.typedef_blocks)
         ):
             return True
-        elif isinstance(self.get_var(name), TypeDef):
+        elif isinstance(self.get_var(name, None), TypeDef):
             return True
         else:
             return False
@@ -489,11 +510,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         finally:
             assert self.scopes.pop() is scope
 
-    def get_var(self, name: str) -> Value:
+    def get_var(self, name: str, default=NO_DEFAULT) -> Value:
         for scope in reversed(self.scopes):
             if name in scope:
                 return scope[name]
-        return None
+        if default is NO_DEFAULT:
+            names_msg = ' '.join(f"{{{' '.join(scope)}}}" for scope in self.scopes)
+            raise Exception(f"Object not found: {name!r} (names currently in scope: {names_msg})")
+        else:
+            return default
 
     def set_var(self, name: str, value: Value):
         self.scopes[-1][name] = value
@@ -531,6 +556,23 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.globals[name] = function
         return function
 
+    def on_cast__cast_expression(self, match: ParseMatch) -> Value:
+        # TODO: handle conversions between char* and other things...
+        # I think the way to do it will be to have sizeof X always be 1,
+        # and then have a MagicCharPointer class...
+        # The idea being that the representation of any value by char* will
+        # be an instance of MagicCharPointer, which behaves like a pointer
+        # to a single-char array {0xFF}, but also has a reference to an
+        # arbitrary object, which is extracted when we cast to anything
+        # other than char *.
+        return self.on(match.children[1])
+
+    def on_declaration_list(self, match: ParseMatch) -> dict[str, Value]:
+        intialized_values = {}
+        for child in match.children:
+            intialized_values.update(self.on(child))
+        return intialized_values
+
     def on_declaration(self, match: ParseMatch) -> dict[str, Value]:
         intialized_values = {}
 
@@ -548,8 +590,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             declarator = child.children[0]
             name = (declarator.find('.* declare:.') or declarator).token.value
 
-            # Handle typedefs
             if is_typedef:
+                # Handle typedefs
                 value = TypeDef(
                     name=name,
                     declspec=declspec,
@@ -557,11 +599,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 )
                 self.set_var(name, value)
                 intialized_values[name] = value
-
-            # Handle variable initializations
-            value_match = child.find('assign:initializer .')
-            if value_match:
-                value = self.on(value_match)
+            else:
+                # Handle variable initializations
+                value_match = child.find('assign:initializer .')
+                if value_match:
+                    value = self.on(value_match)
+                else:
+                    # Uninitialized variables are assigned a magic Struct object
+                    # which allows you to access arbitrary "fields"...
+                    value = Struct()
                 self.set_var(name, value)
                 intialized_values[name] = value
 
@@ -578,6 +624,39 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         if isinstance(value, Pointer):
             value = value[0]
         return value
+
+    def on_unary_expression(self, match: ParseMatch) -> Value:
+        op = match.children[0].token.value
+        value = self.on(match.children[1])
+        if op == '+':
+            return value
+        elif op == '-':
+            return -value
+        elif op == '~':
+            return ~value
+        elif op == '!':
+            return not value
+        elif op == '*':
+            return self.dereference(value)
+        elif op == '&':
+            # TODO: implement references properly...
+            # Basically, I think all our handlers which currently return Value
+            # should instead return Reference (of which Pointer should be a
+            # subclass).
+            # In particular, think about &x: we want all variables to already
+            # have "references" we can return (or we want to create a Reference
+            # which knows that it's pointing at a variable, and stores a Python
+            # reference to the scope & variable name, etc).
+            # Another approach would be to have a totally separate
+            # GrammarEvaluator used for parsing lvalues, which we would make
+            # use of here instead of the plan old
+            # `value = self.on(match.children[1])` we used above...
+            #
+            # ...in any case, for now we just return a fresh pointer.
+            return Pointer(MemoryBlock(value))
+        else:
+            # Should never happen!
+            raise ParseError(match.token, f"Dunno prefix operator: {op!r}")
 
     def _postfix_operator(self, value: Value, match: ParseMatch) -> Value:
         assert match.rule_name == 'postfix_operator'
@@ -613,6 +692,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
     def call_func(self, func: Function, *param_values) -> Value:
         with self.new_scope() as scope:
+            n_missing_params = len(func.params) - len(param_values)
+            if n_missing_params:
+                # Missing parameters default to magic Struct objects, for
+                # maximum permissiveness
+                original_param_values = param_values
+                param_values = list(original_param_values) + [
+                    Struct() for i in range(n_missing_params)]
+            elif len(param_values) > len(func.params):
+                self.warn(f"Calling {func} with {len(param_values)} parameters, extras will be ignored")
             for param_name, param_value in zip(func.params, param_values):
                 scope[param_name] = param_value
             try:
@@ -637,6 +725,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             self.on(child)
 
     def on_statement_list(self, match: ParseMatch):
+        for child in match.children:
+            self.on(child)
+
+    def on_translation_unit(self, match: ParseMatch):
         for child in match.children:
             self.on(child)
 
@@ -750,6 +842,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             raise ParseError(token, f"Dunno binary op {op!r}")
         setattr(lhs, attr, value)
 
+    def on_if__selection_statement(self, match: ParseMatch):
+        cond_value = self.on(match.children[0])
+        if value_as_bool(cond_value):
+            self.on(match.children[0])
+        elif len(match.children) >= 3:
+            else_branch = match.children[2]
+            assert else_branch.rule_name == 'else_statement'
+            self.on(else_branch.children[0])
+
 
 def main():
     parser = ArgumentParser()
@@ -759,7 +860,7 @@ def main():
     args = parser.parse_args()
 
     minic = MiniC()
-    match = minic.parse_from_file(
+    match = minic.parse_file(
         args.filename,
         verbose=args.verbose,
         partial=args.partial,
