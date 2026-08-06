@@ -64,7 +64,7 @@ Implemented in pure Python!
 It's actually fairly complete.
 
 See its documentation here:
-* [docs/preprocessor.md](/docs/preprocessor.md)
+* [preprocessor.md](/docs/preprocessor.md)
 
 Example usage:
 ```
@@ -79,6 +79,13 @@ Work in progress.
 
 Allows C code to use Python values and functions, and allows definition of
 C functions usable from Python.
+
+Uses a heavily tweaked version of the ANSI C yacc grammar available online:
+* [ansi-c-grammar.txt](/src/loosey/data/ansi-c-grammar.txt)
+
+...which is parsed and interpreted with my custom grammar library, which is
+probably a [packrat parser](https://en.wikipedia.org/wiki/Packrat_parser):
+* [grammar.py](/src/loosey/grammar.py)
 
 Example usage:
 ```python
