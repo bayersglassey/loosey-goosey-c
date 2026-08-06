@@ -110,4 +110,15 @@ Using a Python function from within mini-C:
 >>> minic.globals['sqrt'] = math.sqrt
 >>> minic.eval('sqrt(20 + 5)')
 5.0
+
+Using Python objects, methods, etc from within mini-C:
+(NOTE: all C types are currently ignored, so the "struct t *" here could
+just as easily have been "int" or whatever)
+>>> add_dict_keys = minic.eval("""
+...     int add_dict_keys(struct t *obj) {
+...         return obj->get("x") + obj->get("y");
+...     }
+... """)
+>>> add_dict_keys({'x': 1, 'y': 2})
+3
 ```

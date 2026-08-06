@@ -26,36 +26,25 @@
 
 import re
 import sys
+import json
 from ast import literal_eval
 from typing import NamedTuple, Iterable, Iterator, Optional
 
 
 def to_string_literal(s: str) -> str:
     """Produce a C string literal (i.e. for use as Token.value) from a
-    Python string"""
+    Python string.
+    NOTE: should ideally be the inverse of Token.parse_string"""
     # HACK: json.dumps is prooooobably good enough
-    import json
     return json.dumps(s)
-
-
-def from_string_literal(value: str) -> str:
-    """Produce a Python string from a C string literal"""
-    # HACK: json.loads is prooooobably good enough
-    import json
-    return json.loads(value)
 
 
 def to_char_literal(s: str) -> str:
     """Produce a C char literal (i.e. for use as Token.value) from a
-    Python string"""
+    Python string.
+    NOTE: should ideally be the inverse of Token.parse_char"""
     # HACK: repr is prooooobably good enough
     return repr(s)
-
-
-def from_char_literal(value: str) -> str:
-    """Produce a Python string from a C string literal"""
-    # HACK: literal_eval is prooooobably good enough
-    return literal_eval(value)
 
 
 class SourceFile(NamedTuple):
@@ -164,6 +153,39 @@ class Token(NamedTuple):
             while file:
                 print(f"{indent} ...imported from: {file.filename}")
                 file = file.parent
+
+    def parse_string(self) -> str:
+        """Produce a Python string from a C string literal
+        NOTE: should ideally be the inverse of to_string_literal"""
+        # HACK: json.loads is prooooobably good enough
+        try:
+            return json.loads(self.value)
+        except ValueError:
+            raise ParseError(self, f"Couldn't parse as string: {self.value!r}")
+
+    def parse_char(self) -> str:
+        """Produce a Python string from a C string literal
+        NOTE: should ideally be the inverse of to_char_literal"""
+        # HACK: literal_eval is prooooobably good enough
+        try:
+            return literal_eval(self.value)
+        except SyntaxError:
+            raise ParseError(self, f"Couldn't parse as char: {self.value!r}")
+
+    def parse_number(self) -> int | float:
+        """Produce a Python number from a C number literal"""
+        text = self.value
+        try:
+            if '.' in text:
+                return float(text)
+            elif text.startswith('0x'):
+                return int(text[2:], 16)
+            elif len(text) > 1 and text.startswith('0'):
+                return int(text[1:], 8)
+            else:
+                return int(text)
+        except ValueError:
+            raise ParseError(self, f"Couldn't parse as number: {text!r}")
 
 
 class ParseError(Exception):

@@ -111,10 +111,23 @@
             (void) sizeof x;
             sizeof x;
 
+    [ ] We're not parsing pointer derefrences correctly:
+
+        >>> minic.parse('return p;', 'statement').pprint()
+        return: jump_statement
+          ident: p
+
+        >>> minic.parse('return *p;', 'statement').pprint()
+        multiplicative_expression
+          ident: return
+          *
+          ident: p
+
     [ ] Parsing needs better error messages!..
         I think we can probably use a concept of "longest/deepest successful
         partial parse", like assume that was going to be what it was supposed
         to be...
+        Added GrammarParser.get_parse_error, but it's not amazing...
 
 [ ] Add C99 support!.. where can we find a grammar for it?
 

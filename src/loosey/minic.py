@@ -44,21 +44,6 @@ class Function:
         return self.minic.call_func(self, *args)
 
 
-def _parse_number(token: Token) -> int | float:
-    text = token.value
-    try:
-        if '.' in text:
-            return float(text)
-        elif text.startswith('0x'):
-            return int(text[2:], 16)
-        elif len(text) > 1 and text.startswith('0'):
-            return int(text[1:], 8)
-        else:
-            return int(text)
-    except ValueError:
-        raise ParseError(token, f"Couldn't parse as number: {text!r}")
-
-
 class Return(Exception):
     def __init__(self, value: Value):
         self.value = value
@@ -136,6 +121,26 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
               struct_declaration
                 int
                 declare: y
+
+    Accessing attributes and methods of Python objects:
+
+        >>> from types import SimpleNamespace
+
+        >>> add_struct_fields = minic.eval('''
+        ...     int add_struct_fields(struct t *obj) {
+        ...         return obj->x + obj->y;
+        ...     }
+        ... ''')
+        >>> add_struct_fields(SimpleNamespace(x=1, y=2))
+        3
+
+        >>> add_dict_keys = minic.eval('''
+        ...     int add_dict_keys(struct t *obj) {
+        ...         return obj->get("x") + obj->get("y");
+        ...     }
+        ... ''')
+        >>> add_dict_keys({'x': 1, 'y': 2})
+        3
 
     """
 
@@ -231,9 +236,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
     def on_function_definition(self, match: ParseMatch) -> Value:
         declarator = match.find('declarator')
-        name = match.find('declarator declare:.').token.value
+        name = declarator.find('declare:.').token.value
         params = [child.token.value for child in declarator.findall(
-            'params:direct_operator parameter_list parameter_declaration declare:.')]
+            'params:declarator_suffix .* declare:.')]
         body = match.find('block:compound_statement')
         function = Function(name, params, body, self)
         self.globals[name] = function
@@ -249,6 +254,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             values[name] = value
         return values
 
+    def dereference(self, value: Value) -> Value:
+        # TODO: if value is a pointer, dereference it!..
+        # Otherwise, we return value as-is, which is especially handy if we
+        # want to pass arbitrary Python objects to C code.
+        return value
+
     def on_postfix_expression(self, match: ParseMatch) -> Value:
         children = iter(match.children)
         value = self.on(next(children))
@@ -256,8 +267,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             if child.pattern_name == 'call':
                 param_values = [self.on(subchild) for subchild in child.children]
                 value = value(*param_values)
+            elif child.pattern_name == 'dot':
+                attr = child.children[0].token.value
+                value = getattr(value, attr)
+            elif child.pattern_name == 'arrow':
+                value = self.dereference(value)
+                attr = child.children[0].token.value
+                value = getattr(value, attr)
             else:
-                raise ParseError(child.token, f"Dunno how to eval {child.spec}")
+                raise child.missing_handler()
         return value
 
     def call_func(self, func: Function, *param_values) -> Value:
@@ -272,9 +290,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def on_literal__primary_expression(self, match: ParseMatch) -> Value:
         token = match.token
         if token.toktype == 'NUMBER':
-            return _parse_number(token)
+            return token.parse_number()
+        elif token.toktype == 'STRING':
+            return token.parse_string()
+        elif token.toktype == 'CHAR':
+            return ord(token.parse_char())
         else:
-            raise ParseError(token, f"Dunno how to eval {match.spec}")
+            raise match.missing_handler()
 
     def on_block__compound_statement(self, match: ParseMatch) -> Value:
         for child in match.children:

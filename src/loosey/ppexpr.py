@@ -1,11 +1,7 @@
 from typing import Optional
 
 from loosey import get_data_filepath
-from loosey.pplex import (
-    Token,
-    ParseError,
-    from_char_literal,
-)
+from loosey.pplex import Token, ParseError
 from loosey.grammar import (
     GrammarEvaluator,
     ParseMatch,
@@ -223,8 +219,7 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
         if token.toktype == 'NUMBER':
             return _parse_number(token)
         elif token.toktype == 'CHAR':
-            c = from_char_literal(token.value)
-            return ord(c)
+            return ord(token.parse_char())
         else:
             # Identifiers all have the value 0, because they were supposed
             # to have been expanded before being passed in to parse_pp_expr

@@ -434,6 +434,15 @@ class ParseMatch(NamedTuple):
     def spec(self) -> str:
         return f"{self.pattern_name or ''}:{self.rule_name}"
 
+    @property
+    def handler_name(self) -> str:
+        return GrammarEvaluator.get_handler_name(self.rule_name, self.pattern_name)
+
+    def missing_handler(self) -> ParseError:
+        # For when we're missing the GrammarEvaluator method which would
+        # have handled evaluating this match...
+        return ParseError(self.token, f"Missing handler: {self.handler_name}")
+
     def find(self, spec: str, **kwargs) -> Optional['ParseMatch']:
         matches = self.findall(spec, **kwargs)
         return None if not matches else matches[0]
@@ -1017,7 +1026,8 @@ class GrammarEvaluator:
     def __init__(self):
         self.validate()
 
-    def get_handler_name(self, rule_name: str, pattern_name: Optional[str] = None) -> str:
+    @staticmethod
+    def get_handler_name(rule_name: str, pattern_name: Optional[str] = None) -> str:
         return (
             f'on_{pattern_name}__{rule_name}' if pattern_name
             else f'on_{rule_name}')
@@ -1104,10 +1114,8 @@ class GrammarEvaluator:
         return self.on(match)
 
     def default(self, match: ParseMatch):
-        # NOTE: subclasses probably want to override this method
-        raise ParseError(match.token,
-            f"Don't know how to evaluate {match.spec} "
-            f"(maybe implement {self.get_handler_name(match.rule_name, match.pattern_name)})")
+        # NOTE: subclasses may want to override this method
+        raise match.missing_handler()
 
     def on(self, match: ParseMatch):
         handler_name = self.get_handler_name(match.rule_name, match.pattern_name)

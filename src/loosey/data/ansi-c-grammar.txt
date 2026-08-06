@@ -21,11 +21,15 @@ primary_expression
     | '(' expression ')'
     ;
 
+field_name
+    | IDENTIFIER
+    ;
+
 postfix_operator
     | index: '[' expression ']'
     | call:  '(' ( assignment_expression ( ',' assignment_expression )* )? ')'
-    | dot:   '.' IDENTIFIER
-    | arrow: '->' IDENTIFIER
+    | dot:   '.' field_name
+    | arrow: '->' field_name
     | inc:   '++'
     | dec:   '--'
     ;
@@ -228,11 +232,10 @@ type_qualifier
     | [ 'const' 'volatile' ]
     ;
 
-direct_operator
+declarator_suffix
     | array:   '[' ( constant_expression )? ']'
-    | params:  '(' parameter_type_list ')'
-    | params:  '(' identifier_list ')'
-    | params:  '(' ')'
+    | params:  '(' ( parameter_type_list )? ')'
+    | idents:  '(' identifier_list ')'
     ;
 
 direct_declarator
@@ -245,7 +248,7 @@ pointer
     ;
 
 declarator
-    | ( pointer )? direct_declarator ( direct_operator )*
+    | ( pointer )? direct_declarator ( declarator_suffix )*
     ;
 
 # NOTE: this is its own rule, to make sure it always generates a ParseMatch
