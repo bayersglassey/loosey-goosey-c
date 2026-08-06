@@ -30,6 +30,7 @@ GrammarPatternPartType = (
     | Literal['tokvalue']
     | Literal['maybe']
     | Literal['star']
+    | Literal['oneof']
 )
 
 # Part consists of: (part_type, part_value)
@@ -55,6 +56,8 @@ class GrammarPattern(NamedTuple):
                     s_parts.append('(')
                     visit(part_value)
                     s_parts.append(')*')
+                elif part_type == 'oneof':
+                    s_parts.append('[ ' + ' '.join(map(repr, part_value)) + ' ]')
                 else:
                     s_parts.append(part_value)
         visit(self)
@@ -105,6 +108,7 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
         ...     value
         ...         | NUMBER
         ...         | negative: '-' value
+        ...         | bool: [ 'true' 'false' ]
         ...         | array
         ...         ;
         ...
@@ -118,6 +122,7 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
         value
             | NUMBER
             | negative: '-' value
+            | bool: [ 'true' 'false' ]
             | array
             ;
         array
@@ -132,13 +137,15 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
           "value" -> "value.0";
           "value.1" [label="PAT value[1]: negative: '-' value"];
           "value" -> "value.1";
-          "value.2" [label="PAT value[2]: array"];
+          "value.2" [label="PAT value[2]: bool: [ 'true' 'false' ]"];
           "value" -> "value.2";
+          "value.3" [label="PAT value[3]: array"];
+          "value" -> "value.3";
           "array" [label="RULE: array"];
           "array.0" [label="PAT array[0]: '[' ( value ( ',' value )* )? ']'"];
           "array" -> "array.0";
           "value.1" -> "value";
-          "value.2" -> "array";
+          "value.3" -> "array";
           "array.0" -> "value";
           "array.0" -> "value";
         }
@@ -232,24 +239,37 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
                     pattern_parts.append(('rule', token))
             elif c in TOKTYPE_CHARS:
                 pattern_parts.append(('toktype', token))
-            elif c == '(':
-                pattern_stack.append(pattern_parts)
+            elif c in '([':
+                pattern_stack.append((c, pattern_parts))
                 pattern_parts = []
-            elif c == ')':
+            elif c in ')]':
                 if token == ')?':
                     part_type = 'maybe'
                 elif token == ')*':
                     part_type = 'star'
+                elif token == ']':
+                    part_type = 'oneof'
                 else:
                     raise unexpected(token)
                 if not pattern_stack:
                     raise unexpected(token)
-                old_parts = pattern_stack.pop()
-                # NOTE: sub-patterns currently can't have names, just because
-                # it didn't seem that useful, so we're keeping the
-                # pattern-parser simple
-                sub_pattern = GrammarPattern(name=None, parts=pattern_parts)
-                old_parts.append((part_type, sub_pattern))
+                old_c, old_parts = pattern_stack.pop()
+                expected_c = ')]'['(['.index(old_c)]
+                if c != expected_c:
+                    raise error(f"Expected {expected_c!r}, got {c!r}")
+                if part_type == 'oneof':
+                    bad_parts = [part for part in pattern_parts
+                        if part[0] != 'tokvalue']
+                    if bad_parts:
+                        raise error(f"Entries of [...] should all be exact token matches, but got: {bad_parts}")
+                    values = [part[1] for part in pattern_parts]
+                    old_parts.append((part_type, values))
+                else:
+                    # NOTE: sub-patterns currently can't have names, just because
+                    # it didn't seem that useful, so we're keeping the
+                    # pattern-parser simple
+                    sub_pattern = GrammarPattern(name=None, parts=pattern_parts)
+                    old_parts.append((part_type, sub_pattern))
                 pattern_parts = old_parts
             else:
                 raise unexpected(token)
@@ -508,6 +528,7 @@ class GrammarParser:
         ...     value
         ...         | NUMBER
         ...         | negative: '-' value
+        ...         | bool: [ 'true' 'false' ]
         ...         | array
         ...         ;
         ...
@@ -858,17 +879,22 @@ class GrammarParser:
                                 if self.verbose:
                                     print('. ' * self.match_depth + "NOT MATCH")
                                 return None
-                            token_i += 1
                         elif part_type == 'tokvalue':
                             # Match against token's value
                             if token.value != part_value:
                                 if self.verbose:
                                     print('. ' * self.match_depth + "NOT MATCH")
                                 return None
-                            token_i += 1
+                        elif part_type == 'oneof':
+                            if token.value not in part_value:
+                                if self.verbose:
+                                    print('. ' * self.match_depth + "NOT MATCH")
+                                return None
                         else:
                             # We should never get here...
                             raise Exception(f"Unrecognized pattern part type: {part_type!r}")
+                        # ...we matched against a single token!
+                        token_i += 1
                 if self.verbose:
                     thing = 'RULE' if subpattern is pattern else 'SUB-PATTERN'
                     print('. ' * self.match_depth + f"{thing} MATCHED!")
@@ -931,6 +957,7 @@ class GrammarEvaluator:
         ...     value
         ...         | NUMBER
         ...         | negative: '-' value
+        ...         | bool: [ 'true' 'false' ]
         ...         | array
         ...         ;
         ...
@@ -946,6 +973,8 @@ class GrammarEvaluator:
         ...     squash_children = True
         ...     def on_negative__value(self, match):
         ...         return -self.on(match.children[0])
+        ...     def on_bool__value(self, match):
+        ...         return {'true': True, 'false': False}[match.token.value]
         ...     def on_value(self, match):
         ...         return int(match.token.value)
         ...     def on_array(self, match):
@@ -958,6 +987,12 @@ class GrammarEvaluator:
 
         >>> evaluator.eval('-1')
         -1
+
+        >>> evaluator.eval('true')
+        True
+
+        >>> evaluator.eval('false')
+        False
 
         >>> evaluator.eval('[]')
         []
