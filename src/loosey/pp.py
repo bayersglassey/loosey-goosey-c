@@ -865,7 +865,10 @@ class Preprocessor:
             if token.toktype != 'DEBUG']
 
         # Evaluate the conditional expression
-        return bool(self.ppexpr_evaluator.eval(expanded_tokens))
+        try:
+            return bool(self.ppexpr_evaluator.eval(expanded_tokens))
+        except ParseError as ex:
+            raise ParseError(first_token, f"Couldn't parse conditional expression: {ex}")
 
     def push_conditional(self, frame: ConditionalFrame):
         if not frame.was_true:

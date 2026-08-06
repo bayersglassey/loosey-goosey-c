@@ -106,8 +106,10 @@
             int x(int);
             ((void *)0)
 
-    [ ] Attempting to parse this returns None:
+    [ ] Attempting to parse these returns None:
             int x = (int)y;
+            (void) sizeof x;
+            sizeof x;
 
     [ ] Parsing needs better error messages!..
         I think we can probably use a concept of "longest/deepest successful

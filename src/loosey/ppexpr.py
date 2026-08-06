@@ -180,22 +180,22 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
         >>> evaluator.eval('* 2')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: * 2
+        loosey.pplex.ParseError: <fakefile>:1:1: Invalid expression: * 2
 
         >>> evaluator.eval('2 *')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: 2 *
+        loosey.pplex.ParseError: <fakefile>:1:1: Invalid expression: 2 *
 
         >>> evaluator.eval('(')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: (
+        loosey.pplex.ParseError: <fakefile>:1:1: Invalid expression: (
 
         >>> evaluator.eval(')')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as preprocessor expression: )
+        loosey.pplex.ParseError: <fakefile>:1:1: Invalid expression: )
 
     """
 
@@ -212,7 +212,7 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
         #
         first_token = tokens[0] if tokens else None
         tokens_s = ' '.join(token.value for token in tokens)
-        raise ParseError(first_token, f"Couldn't parse as preprocessor expression: {tokens_s}")
+        raise ParseError(first_token, f"Invalid expression: {tokens_s}")
 
     def on_expression(self, match: ParseMatch) -> int:
         # Comma operator, value is that of last argument
