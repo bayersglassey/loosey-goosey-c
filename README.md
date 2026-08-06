@@ -95,25 +95,27 @@ Example usage:
 >>> add
 add(x, y)
 
-Using a mini-C function directly from Python:
+# Calling a mini-C function directly from Python:
 >>> add(3, 4)
 7
 
+# Calling a mini-C function within mini-C:
 >>> minic.eval('int x = 3, total = add(x, 5);')
 {'x': 3, 'total': 8}
 
+# All the global variables so far, including functions:
 >>> minic.globals
 {'add': add(x, y), 'x': 3, 'total': 8}
 
-Using a Python function from within mini-C:
+# Using a Python function from within mini-C:
 >>> import math
 >>> minic.globals['sqrt'] = math.sqrt
 >>> minic.eval('sqrt(20 + 5)')
 5.0
 
-Using Python objects, methods, etc from within mini-C:
-(NOTE: all C types are currently ignored, so the "struct t *" here could
-just as easily have been "int" or whatever)
+# Using Python objects, methods, etc from within mini-C:
+# (NOTE: all C types are currently ignored, so the "struct t *" here could
+# just as easily have been "int" or whatever)
 >>> add_dict_keys = minic.eval("""
 ...     int add_dict_keys(struct t *obj) {
 ...         return obj->get("x") + obj->get("y");
