@@ -153,7 +153,10 @@ class MemoryBlock:
         return self.entries[index]
 
     def free(self):
-        self.freed = True
+        if self.freed:
+            raise Exception(f"Attempted to free already-freed memory: {self!r}")
+        else:
+            self.freed = True
 
 
 class Pointer:
