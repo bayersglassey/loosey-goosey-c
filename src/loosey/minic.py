@@ -13,21 +13,17 @@ GRAMMAR_FILENAME = get_data_filepath('ansi-c-grammar.txt')
 Value = Any
 
 
-class Type(NamedTuple):
-    match: ParseMatch
-
-
-class TagDefinitionField(NamedTuple):
+class TypeDef(NamedTuple):
     name: str
 
+    # E.g. 'typedef int'
+    declspec: ParseMatch
 
-class TagDefinition(NamedTuple):
-    kind: str # 'struct' or 'union'
-    name: str
-    fields: list[TagDefinitionField]
+    # E.g. 'x', '*x', etc
+    declarator: ParseMatch
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}({self.kind!r}, {self.name!r}, {len(self.fields)} fields)'
+        return f'{self.__class__.__name__}({self.name!r})'
 
 
 class Function:
@@ -93,34 +89,51 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         >>> minic.eval('int x = DOUBLE(3);')
         {'x': 6}
 
-        Parsing of typedefs are correctly handled...
+        Parsing of typedefs is handled correctly!
         See: https://en.wikipedia.org/wiki/Lexer_hack
-        >>> minic.parse('typedef int Integer; Integer *x;').pprint()
-        translation_unit
+        In the examples below, when Integer is not a typedef, `Integer *x`
+        is interpreted as a multiplication; when it's a typedef, `Integer *x`
+        is interpreted as a variable declaration:
+        >>> f = minic.eval('void f() { Integer *x; }')
+        >>> for child in f.body.children: child.pprint()
+        multiplicative_expression
+          ident: Integer
+          *
+          ident: x
+        >>> f = minic.eval('void f() { typedef int Integer; Integer *x; }')
+        >>> for child in f.body.children: child.pprint()
+        declaration_list
           declaration
             declspec: declaration_specifiers
               typedef
               int
-            declare: Integer
+            decl: init_declarator
+              declare: Integer
           declaration
             declspec: declaration_specifiers
               Integer
+            decl: init_declarator
+              declarator
+                pointer: *
+                declare: x
+
+        Similarly, if we evaluate a typedef, it exists in our globals, and
+        is taken into account when parsing:
+        >>> minic.parse('T *x;').pprint()
+        multiplicative_expression
+          ident: T
+          *
+          ident: x
+        >>> minic.eval('typedef struct t T;')
+        {'T': TypeDef('T')}
+        >>> minic.parse('T *x;').pprint()
+        declaration
+          declspec: declaration_specifiers
+            T
+          decl: init_declarator
             declarator
               pointer: *
               declare: x
-
-        >>> minic.parse('struct T { int x; int y; };').pprint()
-        declspec: declaration_specifiers
-          struct_or_union_specifier
-            struct
-            T
-            struct_declaration_list
-              struct_declaration
-                int
-                declare: x
-              struct_declaration
-                int
-                declare: y
 
     Accessing attributes and methods of Python objects:
 
@@ -155,9 +168,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         # NOTE: this is essentially the "call stack" used during evaluation
         self.scopes: list[dict[str, Value]] = [self.globals]
-
-        self.global_tags: dict[str, TagDefinition] = {}
-        self.tag_scopes: list[dict[str, TagDefinition]] = [{}]
 
         # The rules for parsing C typedefs are awful, because they're not
         # purely based on the structure of the grammar, they're also based
@@ -204,14 +214,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             typedef_block.add(child.token.value)
 
     def is_type_name_token(self, token: Token) -> bool:
-        # TODO: also check for typedefs which were previously evaluated,
-        # not just which were declared during the current parse (which is
-        # all that is tracked by self.typedef_blocks)
-        return (
-            token.toktype == 'IDENTIFIER'
-            and self.typedef_blocks and any(
-                token.value in block
-                for block in reversed(self.typedef_blocks)))
+        if token.toktype != 'IDENTIFIER':
+            return False
+        name = token.value
+        if self.typedef_blocks and any(
+            name in block for block in reversed(self.typedef_blocks)
+        ):
+            return True
+        elif isinstance(self.get_var(name), TypeDef):
+            return True
+        else:
+            return False
 
     @contextmanager
     def new_scope(self) -> dict[str, Value]:
@@ -245,14 +258,44 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         return function
 
     def on_declaration(self, match: ParseMatch) -> dict[str, Value]:
-        match = match.find('init_declarator_list') or match
-        values = {}
-        for child in match.findall('init_declarator'):
-            name = child.find('declare:.').token.value
-            value = self.on(child.children[-1])
-            self.set_var(name, value)
-            values[name] = value
-        return values
+        intialized_values = {}
+
+        # The declaration specifiers, e.g. 'int'
+        declspec = match.find('declaration_specifiers')
+
+        # Looking for specifiers like 'typedef', 'extern', 'const', etc
+        specifiers: set[str] = {child.token.value
+            for child in
+                declspec.findall('storage_class_specifier')
+                + declspec.findall('type_qualifier')}
+        is_typedef = 'typedef' in specifiers
+
+        for child in match.findall('init_declarator_list? init_declarator'):
+            declarator = child.children[0]
+            name = (declarator.find('.* declare:.') or declarator).token.value
+
+            # Handle typedefs
+            if is_typedef:
+                value = TypeDef(
+                    name=name,
+                    declspec=declspec,
+                    declarator=declarator,
+                )
+                self.set_var(name, value)
+                intialized_values[name] = value
+
+            # Handle variable initializations
+            value_match = child.find('assign:initializer .')
+            if value_match:
+                value = self.on(value_match)
+                self.set_var(name, value)
+                intialized_values[name] = value
+
+        return intialized_values
+
+    def on_declspec__declaration_specifiers(self, match: ParseMatch):
+        # E.g. for struct definitions, like `struct t { int x; };`
+        pass
 
     def dereference(self, value: Value) -> Value:
         # TODO: if value is a pointer, dereference it!..

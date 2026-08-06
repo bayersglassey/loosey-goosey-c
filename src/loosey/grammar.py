@@ -412,6 +412,9 @@ class ParseMatch(NamedTuple):
 
     children: list['ParseMatch']
 
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.prettystring()})'
+
     def prettystring(self):
         if self.children:
             children_s = ' '.join(child.prettystring() for child in self.children)
@@ -609,6 +612,10 @@ class GrammarParser:
           [
 
     Using match.find() and match.findall():
+
+        Calling match.find('') always returns match as-is:
+        >>> parse('1').find('').pprint()
+        1
 
         >>> match = parse('[[1, [2, 3], -4], 99]', squash_children=True)
         >>> match.pprint()

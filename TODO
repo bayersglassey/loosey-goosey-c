@@ -85,14 +85,28 @@
         encounter a typedef, and add a callback to the parser for the
         TYPE_NAME pseudo-toktype
 
-    [ ] When evaluated, typedefs should be persisted somewhere
-        [ ] More generally, we should figure out the 4 namespaces:
+    [X] Attempting to parse any of the following results in RecursionError:
+            int x(int);
+            ((void *)0)
+
+    [X] When evaluated, typedefs should be persisted somewhere
+        [-] More generally, we should figure out the 4 namespaces:
             https://www.spinellis.gr/cscout/doc/name.html
             * Tags for a struct/union/enum
             * Members of struct/union (actually a separate namespace is assigned to each struct/union)
             * Labels
             * Ordinary identifiers (termed objects in the C standard)
             ...see also: notes/namespaces.txt
+
+            ===> NEVER MIND?.. I think we're going to keep MiniC super
+            dynamic, like basically the semantics will just be Python's,
+            but we'll implement some Python classes representing pointers,
+            structs/unions, etc.
+            But e.g. the structs/unions are going to dynamically add keys
+            to themselves whenever you refer to them. Like Python's
+            types.SimpleNamespace.
+            So... we're not gonna actually pay any attention to struct/union
+            definitions.
 
     [ ] Support multiple call stacks!.. just in case we ever want to have
         threads etc.
@@ -102,9 +116,9 @@
         the preprocessor (and therefore parsing?) and globals and stuff.
         So... what's in CallStack, then?.. minic.scopes, get_var, set_var...
 
-    [X] Attempting to parse any of the following results in RecursionError:
-            int x(int);
-            ((void *)0)
+    [ ] Do we need to support multiple translation units?.. currently MiniC
+        has a single preprocessor, and so can only really represent a single
+        translation unit.
 
     [ ] Attempting to parse these returns None:
             int x = (int)y;

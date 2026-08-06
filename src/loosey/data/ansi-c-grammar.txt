@@ -152,13 +152,8 @@ declaration_specifiers
     | declspec: declaration_specifier ( declaration_specifier )*
     ;
 
-# NOTE: this is its own rule, to make sure it always generates a ParseMatch
-equals
-    | '='
-    ;
-
 init_declarator
-    | declarator ( equals initializer )?
+    | decl: declarator ( '=' initializer )?
     ;
 
 init_declarator_list
@@ -225,7 +220,7 @@ enumerator_list
     ;
 
 enumerator
-    | IDENTIFIER ( equals constant_expression )?
+    | IDENTIFIER ( '=' constant_expression )?
     ;
 
 type_qualifier
@@ -290,8 +285,8 @@ abstract_declarator
     ;
 
 initializer
-    | assignment_expression
-    | '{' initializer_list ( ',' )? '}'
+    | assign: assignment_expression
+    | list:   '{' initializer_list ( ',' )? '}'
     ;
 
 initializer_list
@@ -366,7 +361,7 @@ function_definition
 
 repl_command
     | translation_unit
-    | expression
+    | expression ( ';' )?
     ;
 
 translation_unit
