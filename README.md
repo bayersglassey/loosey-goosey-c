@@ -79,13 +79,22 @@ Work in progress.
 
 Allows C code to use Python values and functions, and allows definition of
 C functions usable from Python.
+It's very dynamic: it ignores the C type system entirely, using Python objects
+as values, including a custom Pointer class.
+If you refer to uninitialized memory, you generally get an instance of Struct,
+which is a custom Python class which secretly adds fields to itself whenever
+you try to refer to them.
 
-Uses a heavily tweaked version of the ANSI C yacc grammar available online:
+The Mini-C parser uses a heavily tweaked version of the ANSI C yacc grammar
+available online:
 * [ansi-c-grammar.txt](/src/loosey/data/ansi-c-grammar.txt)
 
 ...which is parsed and interpreted with my custom grammar library, which is
 probably a [packrat parser](https://en.wikipedia.org/wiki/Packrat_parser):
 * [grammar.py](/src/loosey/grammar.py)
+
+The Mini-C interpreter's code lives here:
+* [minic.py](/src/loosey/minic.py)
 
 Example usage:
 ```python
@@ -97,6 +106,12 @@ Example usage:
 
 >>> minic.eval('1 + 2 * 10 + 3')
 24
+
+# The C preprocessor is available, with all its foibles... remember to add
+# lots of parentheses ;)
+>>> minic.eval('#define DOUBLE(X) X + X')
+>>> minic.eval('10 * DOUBLE(2)')
+22
 
 >>> add = minic.eval('int add(int x, int y) { int z = x + y; return z; }')
 >>> add

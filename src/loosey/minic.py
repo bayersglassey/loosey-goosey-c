@@ -264,6 +264,20 @@ class Pointer:
         self.mem.free()
 
 
+# Maps rule names to operators
+# NOTE: only lists rules which correspond to a single operator.
+# As an example of a rule which is not listed here, additive_expression
+# corresponds to operators '+' and '-', so we have to extract those
+# from the ParseMatch.
+BINARY_EXPRESSION_OPS = {
+    'and_expression': '&',
+    'exclusive_or_expression': '|',
+    'inclusive_or_expression': '^',
+    'logical_and_expression': '&&',
+    'logical_or_expression': '||',
+}
+
+
 class MiniC(GrammarEvaluatorWithPreprocessor):
     r"""Miniature C interpreter, which can use many Python objects and
     functions directly, and whose objects and functions can be used
@@ -276,6 +290,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         >>> minic.eval('1 + 2')
         3
+
+        Watch out for parentheses when you're using macros, of course!..
+        >>> minic.eval('#define DOUBLE(X) X + X')
+        >>> minic.eval('10 * DOUBLE(2)')
+        22
 
         >>> minic.eval('int add(int x, int y) { return x + y; }')
         add(x, y)
@@ -630,18 +649,83 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def on_ident__primary_expression(self, match: ParseMatch) -> Value:
         return self.get_var(match.token.value)
 
-    def on_additive_expression(self, match: ParseMatch) -> Value:
+    def on_expression(self, match: ParseMatch) -> Value:
+        # The "comma operator", evaluates all sub-expressions, returns the
+        # value of the last one
+        for child in match.children:
+            value = self.on(child)
+        return value
+
+    def _on_binary_expression(self, match: ParseMatch) -> Value:
         children = iter(match.children)
         value = self.on(next(children))
         for child in children:
-            op = child.token.value
-            arg = self.on(next(children))
+            if match.rule_name in BINARY_EXPRESSION_OPS:
+                op = BINARY_EXPRESSION_OPS[match.rule_name]
+            else:
+                op = child.token.value
+                child = next(children)
+            if op not in ('&&', '||'):
+                # Short-circuiting logic!.. only evalute the argument if
+                # we need to, see below...
+                arg = self.on(child)
             if op == '+':
                 value += arg
+            elif op == '-':
+                value -= arg
+            elif op == '*':
+                value *= arg
+            elif op == '/':
+                value /= arg
+            elif op == '%':
+                value %= arg
+            elif op == '<<':
+                value <<= arg
+            elif op == '>>':
+                value >>= arg
+            elif op == '<':
+                value = value < arg
+            elif op == '>':
+                value = value > arg
+            elif op == '<=':
+                value = value <= arg
+            elif op == '>=':
+                value = value >= arg
+            elif op == '==':
+                value = value == arg
+            elif op == '!=':
+                value = value != arg
+            elif op == '&':
+                value &= arg
+            elif op == '^':
+                value ^= arg
+            elif op == '|':
+                value |= arg
+            elif op == '&&':
+                # Short-circuiting logic!
+                if not value:
+                    return False
+                return self.on(next(children))
+            elif op == '||':
+                # Short-circuiting logic!
+                if value:
+                    return True
+                return self.on(next(children))
             else:
-                # TODO: implement all the operators!..
+                # We should never get here...
                 raise ParseError(token, f"Dunno binary op {op!r}")
         return value
+
+    on_additive_expression = _on_binary_expression
+    on_multiplicative_expression = _on_binary_expression
+    on_shift_expression = _on_binary_expression
+    on_relational_expression = _on_binary_expression
+    on_equality_expression = _on_binary_expression
+    on_and_expression = _on_binary_expression
+    on_exclusive_or_expression = _on_binary_expression
+    on_inclusive_or_expression = _on_binary_expression
+    on_logical_and_expression = _on_binary_expression
+    on_logical_or_expression = _on_binary_expression
 
     def on_assign__assignment_expression(self, match: ParseMatch) -> Value:
         lhs_match = match.children[0]
