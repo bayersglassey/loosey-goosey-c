@@ -586,6 +586,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             return value[index]
         elif match.pattern_name == 'call':
             param_values = [self.on(child) for child in match.children]
+            value = self.dereference(value) # handle function pointers
             return value(*param_values)
         elif match.pattern_name == 'dot':
             attr = match.children[0].token.value

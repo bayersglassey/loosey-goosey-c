@@ -1,6 +1,7 @@
 // From examples/listobject.pp.c
 
-#define __extension__(...) 0
+#define __extension__
+#define __assert_fail(...)
 
 typedef void
     PyListObject,
@@ -62,10 +63,11 @@ list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
     else if (ihigh > Py_SIZE(((PyObject*)((a)))))
         ihigh = Py_SIZE(((PyObject*)((a))));
     norig = ihigh - ilow;
+    /* We don't support the ({...}) extension yet
     ((void) sizeof ((norig >= 0) ? 1 : 0), __extension__ ({
         if (norig >= 0) ; else __assert_fail ("norig >= 0", "/home/bag/repos/cpython/Objects/listobject.c", 672, __extension__ __PRETTY_FUNCTION__);
     }));
-    /*
+    */
     d = n - norig;
     if (Py_SIZE(((PyObject*)((a)))) + d == 0) {
         Py_XDECREF(((PyObject*)((v_as_SF))));
@@ -73,6 +75,7 @@ list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
     }
     item = a->ob_item;
     s = norig * sizeof(PyObject *);
+    /*
     if (s) {
         if (s > sizeof(recycle_on_stack)) {
             recycle = (PyObject **)PyMem_Malloc(s);

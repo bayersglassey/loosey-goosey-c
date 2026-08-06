@@ -43,17 +43,17 @@ unary_operator
     ;
 
 unary_expression
-    | postfix_expression
+    | sizeof_type:  'sizeof' '(' type_name ')'
+    | sizeof_expr:  'sizeof' unary_expression
     | inc: '++' unary_expression
     | dec: '--' unary_expression
     | unary_operator cast_expression
-    | sizeof_expr:  'sizeof' unary_expression
-    | sizeof_type:  'sizeof' '(' type_name ')'
+    | postfix_expression
     ;
 
 cast_expression
-    | unary_expression
     | cast: '(' type_name ')' cast_expression
+    | unary_expression
     ;
 
 multiplicative_operator
@@ -296,10 +296,10 @@ initializer_list
 statement
     | labeled_statement
     | compound_statement
-    | expression_statement
     | selection_statement
     | iteration_statement
     | jump_statement
+    | expression_statement
     ;
 
 labeled_statement

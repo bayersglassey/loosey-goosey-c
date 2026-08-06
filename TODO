@@ -108,6 +108,23 @@
             So... we're not gonna actually pay any attention to struct/union
             definitions.
 
+    [X] Attempting to parse these returns None:
+            int x = (int)y;
+            (void) sizeof x;
+            sizeof x;
+
+    [X] We're not parsing pointer derefrences correctly:
+
+        >>> minic.parse('return p;', 'statement').pprint()
+        return: jump_statement
+          ident: p
+
+        >>> minic.parse('return *p;', 'statement').pprint()
+        multiplicative_expression
+          ident: return
+          *
+          ident: p
+
     [ ] Support multiple call stacks!.. just in case we ever want to have
         threads etc.
         I think we would need to factor CallStack out of MiniC, and CallStack
@@ -120,28 +137,30 @@
         has a single preprocessor, and so can only really represent a single
         translation unit.
 
-    [ ] Attempting to parse these returns None:
-            int x = (int)y;
-            (void) sizeof x;
-            sizeof x;
-
-    [ ] We're not parsing pointer derefrences correctly:
-
-        >>> minic.parse('return p;', 'statement').pprint()
-        return: jump_statement
-          ident: p
-
-        >>> minic.parse('return *p;', 'statement').pprint()
-        multiplicative_expression
-          ident: return
-          *
-          ident: p
-
     [ ] Parsing needs better error messages!..
         I think we can probably use a concept of "longest/deepest successful
         partial parse", like assume that was going to be what it was supposed
         to be...
         Added GrammarParser.get_parse_error, but it's not amazing...
+
+    [ ] Support conversion to/from bytes
+
+    [ ] Support strings... [...] should find a NUL byte at the end of Python
+        str/bytes objects...
+
+    [ ] Figure out how to implement libraries in Python, e.g. stdio.h,
+        stdlib.h, etc.
+        Presumably src/loosey/lib/stdio.py etc?..
+        But I don't think we want to automatically do file searching.
+        Rather, we want to "register" dict[str, Value] things to include
+        names.
+
+    [ ] Support array/struct initializers {...}
+        ...presumably requires parsing of struct declarations!
+
+    [ ] Struct should probably behave like the number 0 under arithmetic
+        operations... so if we allocate some memory with calloc, or
+        malloc+memset, we can use it like an array of numbers
 
 [ ] Add C99 support!.. where can we find a grammar for it?
 
