@@ -1,4 +1,5 @@
-from typing import Any, Optional, NamedTuple
+import inspect
+from typing import Any, Optional, NamedTuple, Iterator
 from contextlib import contextmanager
 from argparse import ArgumentParser
 
@@ -40,6 +41,22 @@ class Function:
         return self.minic.call_func(self, *args)
 
 
+class PythonFunction:
+    """Looks and behaves like a Function, but just wraps a Python function,
+    not C code"""
+
+    def __init__(self, func, name=None):
+        self.func = func
+        self.name = func.__name__ if name is None else name
+        self.params = list(inspect.signature(func).parameters)
+
+    def __call__(self, *args):
+        return self.func(*args)
+
+    def __repr__(self) -> str:
+        return f"{self.name}({', '.join(self.params)})"
+
+
 class Return(Exception):
     def __init__(self, value: Value):
         self.value = value
@@ -48,6 +65,200 @@ class Break(Exception): pass
 class Goto(Exception):
     def __init__(self, label_name: str):
         self.label_name = label_name
+
+
+class Struct:
+    """Can be used as a struct or union by MiniC.
+    Automatically creates new fields as they are referenced.
+
+        >>> obj = Struct()
+        >>> obj
+        Struct()
+        >>> obj.x = 2
+        >>> obj.x
+        2
+        >>> obj.y
+        Struct()
+        >>> obj
+        Struct(x, y)
+
+    """
+
+    def __init__(self):
+        self.__dict__['fields'] = {}
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({', '.join(self.fields)})"
+
+    def __setattr__(self, attr: str, value: Value):
+        self.fields[attr] = value
+
+    def __getattr__(self, attr: str) -> Value:
+        if attr not in self.fields:
+            self.fields[attr] = Struct()
+        return self.fields[attr]
+
+
+class MemoryBlock:
+    """Behaves like a block of memory in C, i.e. an array of objects.
+    Should generally be accessed through a Pointer."""
+
+    def __init__(self):
+        self.entries: dict[int, Value] = {}
+        self._update_indexes()
+
+        self.freed = False
+
+    def _update_indexes(self):
+        self.min_index = 0 if not self.entries else min(self.entries)
+        self.max_index = 0 if not self.entries else max(self.entries)
+        self._sorted = False
+
+    def _sort_entries(self):
+        if self._sorted:
+            return
+        entries = self.entries
+        self.entries = {index: entries[index] for index in sorted(entries)}
+        self._sorted = True
+
+    def __repr__(self) -> str:
+        msg = f'{self.min_index}..{self.max_index}'
+        if self.freed:
+            msg += ', freed=True'
+        return f'{self.__class__.__name__}({msg})'
+
+    def __iter__(self) -> Iterator[int]:
+        self._sort_entries()
+        return iter(self.entries)
+
+    def items(self) -> Iterator[tuple[int, Value]]:
+        self._sort_entries()
+        return self.entries.items()
+
+    def __contains__(self, index: int) -> bool:
+        return index in self.entries
+
+    def __setitem__(self, index: int, value: Value):
+        self.entries[index] = value
+        self._update_indexes()
+
+    def __getitem__(self, index: int) -> Value:
+        if index not in self.entries:
+            # You can access any offset of the pointer, and by default, you
+            # will find a fresh Struct there.
+            # So you can allocate fresh memory for an object, and assign to
+            # its fields right away.
+            self.entries[index] = Struct()
+            self._update_indexes()
+        return self.entries[index]
+
+    def free(self):
+        self.freed = True
+
+
+class Pointer:
+    """Behaves like a C pointer, i.e. an offset into a block of memory.
+
+        >>> ptr = Pointer(MemoryBlock())
+        >>> ptr
+        Pointer(0..0)
+        >>> ptr[0]
+        Struct()
+        >>> ptr[0] = 1
+        >>> ptr[0]
+        1
+        >>> ptr[-1] = 'hello'
+        >>> ptr[2] = 'world'
+        >>> ptr
+        Pointer(-1..2)
+        >>> ptr + 2
+        Pointer(-3..0)
+        >>> (ptr + 2)[-3]
+        'hello'
+        >>> (ptr + 2)[0]
+        'world'
+        >>> list(ptr + 2)
+        [-3, -2, 0]
+
+        Some syntactic sugar: ptr.contents is the same as ptr[0].
+        But frankly, [0] is probably more straightforward anyway.
+        >>> ptr.contents = 'xx'
+        >>> ptr.contents
+        'xx'
+        >>> ptr[0]
+        'xx'
+
+    """
+
+    def __init__(self, mem: MemoryBlock, index: int = 0):
+        self.__dict__['mem'] = mem
+        self.__dict__['index'] = index
+
+    @property
+    def min_index(self) -> int:
+        return self.mem.min_index - self.index
+
+    @property
+    def max_index(self) -> int:
+        return self.mem.max_index - self.index
+
+    @property
+    def freed(self) -> bool:
+        return self.mem.freed
+
+    def __repr__(self) -> str:
+        msg = f'{self.min_index}..{self.max_index}'
+        if self.freed:
+            msg += ', freed=True'
+        return f'{self.__class__.__name__}({msg})'
+
+    @property
+    def contents(self) -> Value:
+        return self[0]
+
+    @contents.setter
+    def contents(self, value: Value):
+        self[0] = value
+
+    def __iter__(self) -> Iterator[int]:
+        for index in self.mem:
+            yield index - self.index
+
+    def items(self) -> Iterator[tuple[int, Value]]:
+        for index, value in self.mem.items():
+            yield (index - self.index, value)
+
+    def __contains__(self, index: int) -> bool:
+        return index + self.index in self.mem
+
+    def __add__(self, index: int) -> 'Pointer':
+        return Pointer(self.mem, self.index + index)
+
+    def __sub__(self, index: int) -> 'Pointer':
+        return Pointer(self.mem, self.index - index)
+
+    def __iadd__(self, index: int) -> 'Pointer':
+        self.__dict__['index'] += index
+        return self
+
+    def __isub__(self, index: int) -> 'Pointer':
+        self.__dict__['index'] -= index
+        return self
+
+    def __setitem__(self, index: int, value: Value):
+        self.mem[self.index + index] = value
+
+    def __getitem__(self, index: int) -> Value:
+        return self.mem[self.index + index]
+
+    def __setattribute__(self, attr: str, value: Value):
+        # It's very easy to accidentally set the attribute of a pointer,
+        # instead of the Struct you expected it to be referring to...
+        # So we explicitly reject random attribute assignments.
+        raise AttributeError(f"Can't set attribute {attr!r} of a Pointer!")
+
+    def free(self):
+        self.mem.free()
 
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
@@ -74,9 +285,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         >>> minic.eval('int total = add(2, 3);')
         {'total': 5}
-
-        >>> minic.globals
-        {'add': add(x, y), 'x': 1, 'y': 2, 'total': 5}
 
         We can use Python values directly!
         >>> minic.globals['x'] = 99
@@ -140,19 +348,38 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         >>> from types import SimpleNamespace
 
         >>> add_struct_fields = minic.eval('''
-        ...     int add_struct_fields(struct t *obj) {
-        ...         return obj->x + obj->y;
-        ...     }
-        ... ''')
+        ... int add_struct_fields(struct t *obj) {
+        ...     return obj->x + obj->y;
+        ... }''')
         >>> add_struct_fields(SimpleNamespace(x=1, y=2))
         3
 
         >>> add_dict_keys = minic.eval('''
-        ...     int add_dict_keys(struct t *obj) {
-        ...         return obj->get("x") + obj->get("y");
-        ...     }
-        ... ''')
+        ... int add_dict_keys(struct t *obj) {
+        ...     return obj->get("x") + obj->get("y");
+        ... }''')
         >>> add_dict_keys({'x': 1, 'y': 2})
+        3
+
+    Allocating and interacting with memory & pointers:
+
+        Creating a pointer in Python and passing it to C code:
+        >>> ptr = minic.malloc()
+        >>> ptr.contents.x = 3
+        >>> ptr_test = minic.eval('void ptr_test(void *ptr) { ptr->x += 1; }')
+        >>> ptr_test(ptr)
+        >>> ptr.contents.x
+        4
+
+        Creating a pointer in C code and returning it to Python:
+        >>> mkptr = minic.eval('''
+        ... void *mkptr() {
+        ...     void *ptr = malloc(1);
+        ...     ptr->x = 3;
+        ...     return ptr;
+        ... }''')
+        >>> ptr = mkptr()
+        >>> ptr.contents.x
         3
 
     """
@@ -164,7 +391,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.globals: dict[str, Value] = {}
+        self.globals: dict[str, Value] = {
+            'malloc': PythonFunction(self.malloc),
+            'calloc': PythonFunction(self.calloc),
+            'realloc': PythonFunction(self.realloc),
+            'free': PythonFunction(self.free),
+        }
 
         # NOTE: this is essentially the "call stack" used during evaluation
         self.scopes: list[dict[str, Value]] = [self.globals]
@@ -247,6 +479,26 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def set_vars(self, values: dict[str, Value]):
         self.scopes[-1].update(values)
 
+    def malloc(self, size: int = 1) -> Pointer:
+        # NOTE: size is currently unused... we don't care, our memory gives
+        # you fresh Struct objects if you refer to fields or pointer indexes
+        # which hadn't been initialized, it grows without bounds
+        return Pointer(MemoryBlock())
+
+    def calloc(self, nmemb: int = 1, size: int = 1) -> Pointer:
+        return self.malloc(nmemb * size)
+
+    def realloc(self, ptr: Optional[Pointer], size: int = 1) -> Pointer:
+        return self.malloc(size) if ptr is None else ptr
+
+    def free(self, ptr: Optional[Pointer]):
+        if ptr is not None:
+            ptr.free()
+
+
+    ###########################################################################
+    # GRAMMAR HANDLER METHODS
+
     def on_function_definition(self, match: ParseMatch) -> Value:
         declarator = match.find('declarator')
         name = declarator.find('declare:.').token.value
@@ -298,27 +550,42 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         pass
 
     def dereference(self, value: Value) -> Value:
-        # TODO: if value is a pointer, dereference it!..
+        # If value is a pointer, dereference it!..
         # Otherwise, we return value as-is, which is especially handy if we
         # want to pass arbitrary Python objects to C code.
+        if isinstance(value, Pointer):
+            value = value[0]
         return value
+
+    def _postfix_operator(self, value: Value, match: ParseMatch) -> Value:
+        assert match.rule_name == 'postfix_operator'
+        if match.pattern_name == 'index':
+            index = self.on(match.children[1])
+            return value[index]
+        elif match.pattern_name == 'call':
+            param_values = [self.on(child) for child in match.children]
+            return value(*param_values)
+        elif match.pattern_name == 'dot':
+            attr = match.children[0].token.value
+            return getattr(value, attr)
+        elif match.pattern_name == 'arrow':
+            value = self.dereference(value)
+            attr = match.children[0].token.value
+            return getattr(value, attr)
+        else:
+            # TODO: implement postfix increment/decrement!..
+            # Although those will presumably require that value be a Pointer,
+            # or a Reference if we add such a class.
+            # That is, if value is e.g. the Python object 3, then we're not
+            # going to be able to increment/decrement it in a way which is
+            # visible outside this function...
+            raise ParseError(match.token, f"Dunno postfix operator: {match.prettystring()}")
 
     def on_postfix_expression(self, match: ParseMatch) -> Value:
         children = iter(match.children)
         value = self.on(next(children))
         for child in children:
-            if child.pattern_name == 'call':
-                param_values = [self.on(subchild) for subchild in child.children]
-                value = value(*param_values)
-            elif child.pattern_name == 'dot':
-                attr = child.children[0].token.value
-                value = getattr(value, attr)
-            elif child.pattern_name == 'arrow':
-                value = self.dereference(value)
-                attr = child.children[0].token.value
-                value = getattr(value, attr)
-            else:
-                raise child.missing_handler()
+            value = self._postfix_operator(value, child)
         return value
 
     def call_func(self, func: Function, *param_values) -> Value:
@@ -339,12 +606,16 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         elif token.toktype == 'CHAR':
             return ord(token.parse_char())
         else:
-            raise match.missing_handler()
+            # This should never happen
+            raise ParseErrpr(token, f"Dunno literal: {match.prettystring()}")
 
-    def on_block__compound_statement(self, match: ParseMatch) -> Value:
+    def on_block__compound_statement(self, match: ParseMatch):
         for child in match.children:
-            value = self.on(child)
-        return None
+            self.on(child)
+
+    def on_statement_list(self, match: ParseMatch):
+        for child in match.children:
+            self.on(child)
 
     def on_return__jump_statement(self, match: ParseMatch) -> Value:
         if match.children:
@@ -365,8 +636,31 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             if op == '+':
                 value += arg
             else:
+                # TODO: implement all the operators!..
                 raise ParseError(token, f"Dunno binary op {op!r}")
         return value
+
+    def on_assign__assignment_expression(self, match: ParseMatch) -> Value:
+        lhs_match = match.children[0]
+        op = match.children[1].token.value
+        rhs = self.on(match.children[2])
+
+        # HACK: we assume lhs_match has structure like `ptr->x`
+        # TODO: figure out how to recursively calculate a reference, i.e.
+        # an lvalue.
+        # See also: self._postfix_operator, and its increment/decrement
+        name = lhs_match.children[0].token.value
+        attr = lhs_match.children[1].children[0].token.value
+        lhs = self.get_var(name)
+        lhs = self.dereference(lhs) # because we're assuming '->'
+        if op == '=':
+            value = rhs
+        elif op == '+=':
+            value = getattr(lhs, attr) + rhs
+        else:
+            # TODO: implement all the operators!..
+            raise ParseError(token, f"Dunno binary op {op!r}")
+        setattr(lhs, attr, value)
 
 
 def main():

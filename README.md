@@ -123,4 +123,23 @@ add(x, y)
 ... """)
 >>> add_dict_keys({'x': 1, 'y': 2})
 3
+
+# Creating a pointer in Python and passing it to C code:
+>>> ptr = minic.malloc()
+>>> ptr.contents.x = 3
+>>> ptr_test = minic.eval('void ptr_test(void *ptr) { ptr->x += 1; }')
+>>> ptr_test(ptr)
+>>> ptr.contents.x
+4
+
+# Creating a pointer in C code and returning it to Python:
+>>> mkptr = minic.eval('''
+... void *mkptr() {
+...     void *ptr = malloc(1);
+...     ptr->x = 3;
+...     return ptr;
+... }''')
+>>> ptr = mkptr()
+>>> ptr.contents.x
+3
 ```
