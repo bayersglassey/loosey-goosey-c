@@ -30,12 +30,12 @@ and then you can instantiate the types and call the functions and so on, and
 have things fail at runtime instead of compile-time, for instance if you
 call some function which attempts to call another function which hasn't been
 defined.
-And you should be able to define missing functions and things quickly in
+And you should be able to mock out missing functions and things quickly in
 Python, so you can re-run the thing you were actually interested in, and have
 it succeed this time.
 
 Last thing in this rationale, I'm going to breathe to you a secret word...
-doctests.
+[doctests](https://docs.python.org/3/library/doctest.html).
 Imagine doctests for your C code.
 
 
@@ -77,23 +77,24 @@ $ echo -e '#define M(X) [X]\nM(M(1))' | python -m loosey.pp
 
 Work in progress.
 
-Allows C code to use Python values and functions, and allows definition of
-C functions usable from Python.
+Allows C code to be run dynamically, using Python values.
+Functions and values can be freely exchanged between C and Python.
+
 It's very dynamic: it ignores the C type system entirely, using Python objects
 as values, including a custom Pointer class.
 If you refer to uninitialized memory, you generally get an instance of Struct,
 which is a custom Python class which secretly adds fields to itself whenever
 you try to refer to them.
 
-The Mini-C parser uses a heavily tweaked version of the ANSI C yacc grammar
+The parser uses a heavily tweaked version of the ANSI C yacc grammar
 available online:
 * [ansi-c-grammar.txt](/src/loosey/data/ansi-c-grammar.txt)
 
-...which is parsed and interpreted with my custom grammar library, which is
+...which is parsed and interpreted with a custom grammar library, which is
 probably a [packrat parser](https://en.wikipedia.org/wiki/Packrat_parser):
 * [grammar.py](/src/loosey/grammar.py)
 
-The Mini-C interpreter's code lives here:
+The interpreter's code lives here:
 * [minic.py](/src/loosey/minic.py)
 
 Example usage:
