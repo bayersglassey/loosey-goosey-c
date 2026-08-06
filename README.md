@@ -103,10 +103,6 @@ add(x, y)
 >>> minic.eval('int x = 3, total = add(x, 5);')
 {'x': 3, 'total': 8}
 
-# All the global variables so far, including functions:
->>> minic.globals
-{'add': add(x, y), 'x': 3, 'total': 8}
-
 # Using a Python function from within mini-C:
 >>> import math
 >>> minic.globals['sqrt'] = math.sqrt
@@ -117,10 +113,9 @@ add(x, y)
 # (NOTE: all C types are currently ignored, so the "struct t *" here could
 # just as easily have been "int" or whatever)
 >>> add_dict_keys = minic.eval("""
-...     int add_dict_keys(struct t *obj) {
-...         return obj->get("x") + obj->get("y");
-...     }
-... """)
+... int add_dict_keys(struct t *obj) {
+...     return obj->get("x") + obj->get("y");
+... }""")
 >>> add_dict_keys({'x': 1, 'y': 2})
 3
 
