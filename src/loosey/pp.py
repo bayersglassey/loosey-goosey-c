@@ -1258,6 +1258,55 @@ class Preprocessor:
             yield token
 
 
+class GrammarEvaluatorWithPreprocessor(GrammarEvaluator):
+    """A GrammarEvaluator subclass which adds a C preprocessor which is used
+    when parsing input
+
+        >>> from loosey.grammar import parse_rules
+
+        >>> rules = parse_rules('''
+        ...     value
+        ...         | NUMBER
+        ...         | array
+        ...         ;
+        ...     array
+        ...         | '[' ( value ( ',' value )* )? ']'
+        ...         ;
+        ... ''')
+
+        >>> class ValueEvaluator(GrammarEvaluatorWithPreprocessor):
+        ...     grammar_rules = rules
+        ...     main_rule_name = 'value'
+        ...     squash_children = True
+        ...     def on_value(self, match):
+        ...         return int(match.token.value)
+        ...     def on_array(self, match):
+        ...         return [self.on(child) for child in match.children]
+
+        >>> evaluator = ValueEvaluator()
+        >>> evaluator.parse('''
+        ...     #define DOUBLE(X) X, X
+        ...     #define SOME_MACRO
+        ... ''')
+        >>> evaluator.eval('''
+        ...     #ifdef SOME_MACRO
+        ...     [1, DOUBLE(2), 3]
+        ...     #else
+        ...     [99]
+        ...     #endif
+        ... ''')
+        [1, 2, 2, 3]
+
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.pp = Preprocessor()
+
+    def coerce_lines(self, lines: list[str]) -> list[Token]:
+        return list(self.pp.process(lines))
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument('-f', '--filename', default='-', help="Use '-' for stdin")
@@ -1321,55 +1370,6 @@ def main():
         # So we can pipe ourselves into "less" and quit before lexing the
         # whole file, etc
         pass
-
-
-class GrammarEvaluatorWithPreprocessor(GrammarEvaluator):
-    """A GrammarEvaluator subclass which adds a C preprocessor which is used
-    when parsing input
-
-        >>> from loosey.grammar import parse_rules
-
-        >>> rules = parse_rules('''
-        ...     value
-        ...         | NUMBER
-        ...         | array
-        ...         ;
-        ...     array
-        ...         | '[' ( value ( ',' value )* )? ']'
-        ...         ;
-        ... ''')
-
-        >>> class ValueEvaluator(GrammarEvaluatorWithPreprocessor):
-        ...     grammar_rules = rules
-        ...     main_rule_name = 'value'
-        ...     squash_children = True
-        ...     def on_value(self, match):
-        ...         return int(match.token.value)
-        ...     def on_array(self, match):
-        ...         return [self.on(child) for child in match.children]
-
-        >>> evaluator = ValueEvaluator()
-        >>> evaluator.parse('''
-        ...     #define DOUBLE(X) X, X
-        ...     #define SOME_MACRO
-        ... ''')
-        >>> evaluator.eval('''
-        ...     #ifdef SOME_MACRO
-        ...     [1, DOUBLE(2), 3]
-        ...     #else
-        ...     [99]
-        ...     #endif
-        ... ''')
-        [1, 2, 2, 3]
-
-    """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.pp = Preprocessor()
-
-    def coerce_lines(self, lines: list[str]) -> list[Token]:
-        return list(self.pp.process(lines))
 
 
 if __name__ == '__main__':
