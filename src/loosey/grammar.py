@@ -292,6 +292,15 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
 
     if rule is not None:
         raise error(f"Unterminated rule: {rule.name}")
+
+    # Validate that no patterns refer to rules which weren't defined
+    missing_rules = {other_rule_name
+        for rule in rules.values()
+        for other_rule_name in rule.downstream_rules()
+        if other_rule_name not in rules}
+    if missing_rules:
+        raise error(f"Missing rule definitions: {', '.join(sorted(missing_rules))}")
+
     return rules
 
 

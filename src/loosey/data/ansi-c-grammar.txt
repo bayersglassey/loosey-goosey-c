@@ -137,9 +137,27 @@ constant_expression
     | conditional_expression
     ;
 
-declaration
-    | declaration_specifiers ';'
-    | declaration_specifiers init_declarator_list ';'
+storage_class_specifier
+    | [ 'typedef' 'extern' 'static' 'auto' 'register' ]
+    ;
+
+type_specifier
+    | [ 'void' 'char' 'short' 'int' 'long' 'float' 'double' 'signed' 'unsigned' ]
+    | struct_or_union_specifier
+    | enum_specifier
+    | TYPE_NAME
+    ;
+
+type_qualifier
+    | [ 'const' 'volatile' ]
+    ;
+
+init_declarator
+    | decl: declarator ( '=' initializer )?
+    ;
+
+init_declarator_list
+    | init_declarator ( ',' init_declarator )*
     ;
 
 declaration_specifier
@@ -152,23 +170,9 @@ declaration_specifiers
     | declspec: declaration_specifier ( declaration_specifier )*
     ;
 
-init_declarator
-    | decl: declarator ( '=' initializer )?
-    ;
-
-init_declarator_list
-    | init_declarator ( ',' init_declarator )*
-    ;
-
-storage_class_specifier
-    | [ 'typedef' 'extern' 'static' 'auto' 'register' ]
-    ;
-
-type_specifier
-    | [ 'void' 'char' 'short' 'int' 'long' 'float' 'double' 'signed' 'unsigned' ]
-    | struct_or_union_specifier
-    | enum_specifier
-    | TYPE_NAME
+declaration
+    | declaration_specifiers ';'
+    | declaration_specifiers init_declarator_list ';'
     ;
 
 struct_or_union_or_enum_tag
@@ -221,10 +225,6 @@ enumerator_list
 
 enumerator
     | IDENTIFIER ( '=' constant_expression )?
-    ;
-
-type_qualifier
-    | [ 'const' 'volatile' ]
     ;
 
 declarator_identifier

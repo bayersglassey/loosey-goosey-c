@@ -129,6 +129,9 @@
         See: on_assign__assignment_expression, the '+=' case
         See: MiniC.on_unary_expression, the '&' case
 
+    [ ] Make some basic stdlib headers, without the _Float32 etc stuff which
+        the real ones on my system appear to have
+
     [ ] Handle postfix increment/decrement correctly?!..
         Omg. How is the semantics even defined, and can we do that within our
         current "ParseMatch visiting" approach?..
@@ -150,6 +153,40 @@
         partial parse", like assume that was going to be what it was supposed
         to be...
         Added GrammarParser.get_parse_error, but it's not amazing...
+
+        [ ] I think one thing we can do is less backtracking?.. so like, if
+            we're parsing `int x` and we don't yet know whether it's gonna
+            be a declaration or an expression, I believe once we see `int`
+            we know we must be in a declaration, so we don't have to check
+            more patterns after that.
+            So, we can give a better error message if we discover something
+            unexpected once we're "locked in" to parsing a declaration, etc.
+            And we could add an explicit thing for this to the grammar rule
+            syntax, like `!lockin`, orrrr can we automatically detect it?..
+            Consider:
+
+                unary_expression
+                    | sizeof_type:  'sizeof' '(' type_name ')'
+                    | sizeof_expr:  'sizeof' unary_expression
+                    | inc: '++' unary_expression
+                    | dec: '--' unary_expression
+                    | unary_operator cast_expression
+                    | postfix_expression
+                    ;
+
+            ...once we see `sizeof`, it's clear (to me) that we must be in
+            one of the first two patterns.
+            But I guess in order to automatically know that, we would have
+            to look inside unary_operator and postfix_expression to see
+            whether they can ever start with `sizeof`.
+            Hmmmmm.
+
+            OMG BUT ACCORDING TO OUR ANSI C GRAMMAR, THIS IS A VALID
+            FUNCTION DEFINITION:
+
+                add { return x + y; }
+
+            Freaking K&R C, man!..
 
     [ ] Support conversion to/from bytes
         See: MiniC.on_cast__cast_expression

@@ -535,6 +535,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        # Define some default macros
+        self.pp.execute('#define __restrict')
+        self.pp.execute('#define __extension__')
+        self.pp.execute('#define __attribute__(...)')
+        self.pp.execute('#define _Float32 float')
+        self.pp.execute('#define _Float64 float')
+        self.pp.execute('#define _Float128 float')
+        self.pp.execute('#define _Float32x float')
+        self.pp.execute('#define _Float64x float')
+        self.pp.execute('#define __asm__(...) ;')
+
         # NOTE: this is the "call stack" for variables during evaluation
         self.global_scope: dict[str, Pointer] = {}
         self.scopes: list[dict[str, Pointer]] = [self.global_scope]
@@ -560,14 +571,24 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.pattern_callbacks = {
             ('compound_statement', 'block'):
                 (self.enter_typedef_block, self.exit_typedef_block),
-            ('translation_unit', None):
-                (self.enter_typedef_block, self.exit_typedef_block),
             ('declaration', None):
                 (None, self.exit_declaration),
         }
         self.toktype_predicates = {
             'TYPE_NAME': self.is_type_name_token,
         }
+
+    def parse(self, *args, **kwargs):
+        block = set()
+        self.typedef_blocks.append(block)
+        try:
+            return super().parse(*args, **kwargs)
+        finally:
+            assert self.typedef_blocks.pop() is block
+
+    def globals(self) -> dict[str, Value]:
+        return {name: ptr.contents
+            for name, ptr in self.global_scope.items()}
 
     def no_match(self, tokens: list[Token], rule_name: str) -> Optional[ParseMatch]:
         if not tokens:
@@ -1070,17 +1091,21 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('-f', '--filename', default='-')
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
+    parser.add_argument('-p', '--parse-only', default=False, action='store_true')
     parser.add_argument('--partial', default=False, action='store_true')
     args = parser.parse_args()
 
     mini = MiniC()
-    match = mini.parse_file(
-        args.filename,
-        verbose=args.verbose,
-        partial=args.partial,
-    )
-    if match:
+    if args.parse_only:
+        match = mini.parse_file(
+            args.filename,
+            verbose=args.verbose,
+            partial=args.partial,
+            raise_on_no_match=True,
+        )
         match.pprint()
+    else:
+        mini.eval_file(args.filename)
 
 
 if __name__ == '__main__':
