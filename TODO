@@ -115,11 +115,11 @@
 
     [X] We're not parsing pointer derefrences correctly:
 
-        >>> minic.parse('return p;', 'statement').pprint()
+        >>> mini.parse('return p;', 'statement').pprint()
         return: jump_statement
           ident: p
 
-        >>> minic.parse('return *p;', 'statement').pprint()
+        >>> mini.parse('return *p;', 'statement').pprint()
         multiplicative_expression
           ident: return
           *
@@ -139,7 +139,7 @@
         should be a GrammarEvaluator... maybe?
         But some parts of MiniC should presumably stay centralized, like
         the preprocessor (and therefore parsing?) and globals and stuff.
-        So... what's in CallStack, then?.. minic.scopes, get_var, set_var...
+        So... what's in CallStack, then?.. mini.scopes, get_var, set_var...
 
     [ ] Do we need to support multiple translation units?.. currently MiniC
         has a single preprocessor, and so can only really represent a single

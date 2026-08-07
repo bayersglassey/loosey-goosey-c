@@ -95,26 +95,26 @@ probably a [packrat parser](https://en.wikipedia.org/wiki/Packrat_parser):
 * [grammar.py](/src/loosey/grammar.py)
 
 The interpreter's code lives here:
-* [minic.py](/src/loosey/minic.py)
+* [mini.py](/src/loosey/mini.py)
 
 Example usage:
 ```python
->>> from loosey.minic import MiniC
->>> minic = MiniC()
+>>> from loosey.mini import MiniC
+>>> mini = MiniC()
 
->>> minic.eval('1 + 2')
+>>> mini.eval('1 + 2')
 3
 
->>> minic.eval('1 + 2 * 10 + 3')
+>>> mini.eval('1 + 2 * 10 + 3')
 24
 
 # The C preprocessor is available, with all its foibles... remember to add
 # lots of parentheses ;)
->>> minic.eval('#define DOUBLE(X) X + X')
->>> minic.eval('10 * DOUBLE(2)')
+>>> mini.eval('#define DOUBLE(X) X + X')
+>>> mini.eval('10 * DOUBLE(2)')
 22
 
->>> add = minic.eval('int add(int x, int y) { int z = x + y; return z; }')
+>>> add = mini.eval('int add(int x, int y) { int z = x + y; return z; }')
 >>> add
 add(x, y)
 
@@ -123,19 +123,19 @@ add(x, y)
 7
 
 # Calling a mini-C function within mini-C:
->>> minic.eval('int x = 3, total = add(x, 5);')
+>>> mini.eval('int x = 3, total = add(x, 5);')
 {'x': 3, 'total': 8}
 
 # Using a Python function from within mini-C:
 >>> import math
->>> minic.globals['sqrt'] = math.sqrt
->>> minic.eval('sqrt(20 + 5)')
+>>> mini.globals['sqrt'] = math.sqrt
+>>> mini.eval('sqrt(20 + 5)')
 5.0
 
 # Using Python objects, methods, etc from within mini-C:
 # (NOTE: all C types are currently ignored, so the "struct t *" here could
 # just as easily have been "int" or whatever)
->>> add_dict_keys = minic.eval("""
+>>> add_dict_keys = mini.eval("""
 ... int add_dict_keys(struct t *obj) {
 ...     return obj->get("x") + obj->get("y");
 ... }""")
@@ -143,15 +143,15 @@ add(x, y)
 3
 
 # Creating a pointer in Python and passing it to C code:
->>> ptr = minic.malloc()
+>>> ptr = mini.malloc()
 >>> ptr.contents.x = 3
->>> ptr_test = minic.eval('void ptr_test(void *ptr) { ptr->x += 1; }')
+>>> ptr_test = mini.eval('void ptr_test(void *ptr) { ptr->x += 1; }')
 >>> ptr_test(ptr)
 >>> ptr.contents.x
 4
 
 # Creating a pointer in C code and returning it to Python:
->>> mkptr = minic.eval('''
+>>> mkptr = mini.eval('''
 ... void *mkptr() {
 ...     void *ptr = malloc(1);
 ...     ptr->x = 3;

@@ -54,13 +54,13 @@ class Function:
             params: list[str],
             variadic: bool,
             body: ParseMatch,
-            minic: 'MiniC',
+            mini: 'MiniC',
             ):
         self.name = name
         self.params = params
         self.variadic = variadic
         self.body = body
-        self.minic = minic
+        self.mini = mini
 
     def __repr__(self) -> str:
         params_msg = ', '.join(self.params)
@@ -69,7 +69,7 @@ class Function:
         return f"{self.name}({params_msg})"
 
     def __call__(self, *args) -> Value:
-        return self.minic.call_func(self, *args)
+        return self.mini.call_func(self, *args)
 
     @cached_property
     def labels(self) -> dict[str, ParseMatch]:
@@ -294,11 +294,11 @@ class Pointer:
         >>> ptr[-1] = 'uh oh'
         Traceback (most recent call last):
          ...
-        loosey.minic.SegmentationFault: Index -1 < 0
+        loosey.mini.SegmentationFault: Index -1 < 0
         >>> ptr[3] = 'not again'
         Traceback (most recent call last):
          ...
-        loosey.minic.SegmentationFault: Index 3 >= 3
+        loosey.mini.SegmentationFault: Index 3 >= 3
 
     """
 
@@ -401,37 +401,37 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     Comes with its own C preprocessor, can parse all of ANSI C, and can
     run... some C code. It's a work in progress.
 
-        >>> minic = MiniC()
+        >>> mini = MiniC()
 
-        >>> minic.eval('1 + 2')
+        >>> mini.eval('1 + 2')
         3
 
         Watch out for parentheses when you're using macros, of course!..
-        >>> minic.eval('#define DOUBLE(X) X + X')
-        >>> minic.eval('10 * DOUBLE(2)')
+        >>> mini.eval('#define DOUBLE(X) X + X')
+        >>> mini.eval('10 * DOUBLE(2)')
         22
 
-        >>> minic.eval('int add(int x, int y) { return x + y; }')
+        >>> mini.eval('int add(int x, int y) { return x + y; }')
         add(x, y)
 
-        >>> minic.eval('int x = 1, y = 2;')
+        >>> mini.eval('int x = 1, y = 2;')
         {'x': 1, 'y': 2}
 
-        >>> minic.eval('int total = add(x, y);')
+        >>> mini.eval('int total = add(x, y);')
         {'total': 3}
 
-        >>> minic.eval('int total = add(2, 3);')
+        >>> mini.eval('int total = add(2, 3);')
         {'total': 5}
 
         We can use Python values directly!
-        >>> minic.set_var('x', 99)
-        >>> minic.set_var('ten', lambda x: x * 10)
-        >>> minic.eval('int total = ten(x);')
+        >>> mini.set_var('x', 99)
+        >>> mini.set_var('ten', lambda x: x * 10)
+        >>> mini.eval('int total = ten(x);')
         {'total': 990}
 
         The C preprocessor is available too!
-        >>> minic.eval('#define DOUBLE(X) X + X')
-        >>> minic.eval('int x = DOUBLE(3);')
+        >>> mini.eval('#define DOUBLE(X) X + X')
+        >>> mini.eval('int x = DOUBLE(3);')
         {'x': 6}
 
         Parsing of typedefs is handled correctly!
@@ -439,13 +439,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         In the examples below, when Integer is not a typedef, `Integer *x`
         is interpreted as a multiplication; when it's a typedef, `Integer *x`
         is interpreted as a variable declaration:
-        >>> f = minic.eval('void f() { Integer *x; }')
+        >>> f = mini.eval('void f() { Integer *x; }')
         >>> for child in f.body.children: child.pprint()
         multiplicative_expression
           ident: Integer
           *
           ident: x
-        >>> f = minic.eval('void f() { typedef int Integer; Integer *x; }')
+        >>> f = mini.eval('void f() { typedef int Integer; Integer *x; }')
         >>> for child in f.body.children: child.pprint()
         declaration_list
           declaration
@@ -464,14 +464,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         Similarly, if we evaluate a typedef, it exists in our globals, and
         is taken into account when parsing:
-        >>> minic.parse('T *x;').pprint()
+        >>> mini.parse('T *x;').pprint()
         multiplicative_expression
           ident: T
           *
           ident: x
-        >>> minic.eval('typedef struct t T;')
+        >>> mini.eval('typedef struct t T;')
         {'T': TypeDef('T')}
-        >>> minic.parse('T *x;').pprint()
+        >>> mini.parse('T *x;').pprint()
         declaration
           declspec: declaration_specifiers
             T
@@ -484,14 +484,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         >>> from types import SimpleNamespace
 
-        >>> add_struct_fields = minic.eval('''
+        >>> add_struct_fields = mini.eval('''
         ... int add_struct_fields(struct t *obj) {
         ...     return obj->x + obj->y;
         ... }''')
         >>> add_struct_fields(SimpleNamespace(x=1, y=2))
         3
 
-        >>> add_dict_keys = minic.eval('''
+        >>> add_dict_keys = mini.eval('''
         ... int add_dict_keys(struct t *obj) {
         ...     return obj->get("x") + obj->get("y");
         ... }''')
@@ -501,15 +501,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     Allocating and interacting with memory & pointers:
 
         Creating a pointer in Python and passing it to C code:
-        >>> ptr = minic.malloc()
+        >>> ptr = mini.malloc()
         >>> ptr.contents.x = 3
-        >>> ptr_test = minic.eval('void ptr_test(void *ptr) { ptr->x += 1; }')
+        >>> ptr_test = mini.eval('void ptr_test(void *ptr) { ptr->x += 1; }')
         >>> ptr_test(ptr)
         >>> ptr.contents.x
         4
 
         Creating a pointer in C code and returning it to Python:
-        >>> mkptr = minic.eval('''
+        >>> mkptr = mini.eval('''
         ... void *mkptr() {
         ...     void *ptr = malloc(1);
         ...     ptr->x = 3;
@@ -690,7 +690,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             params=params,
             variadic=variadic,
             body=body,
-            minic=self,
+            mini=self,
         )
         self.set_var(name, function)
         return function
@@ -1073,8 +1073,8 @@ def main():
     parser.add_argument('--partial', default=False, action='store_true')
     args = parser.parse_args()
 
-    minic = MiniC()
-    match = minic.parse_file(
+    mini = MiniC()
+    match = mini.parse_file(
         args.filename,
         verbose=args.verbose,
         partial=args.partial,
