@@ -15,6 +15,7 @@ from typing import (
 )
 from string import ascii_lowercase, ascii_uppercase
 from functools import cached_property, lru_cache
+from contextlib import contextmanager
 
 from loosey import get_data_filepath
 from loosey.pplex import Token, Lexer, ParseError, tokenize_file
@@ -23,6 +24,20 @@ from loosey.pplex import Token, Lexer, ParseError, tokenize_file
 RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|\)[?*]|[a-z][a-z0-9_]*:?|[A-Z][A-Z0-9_]*|'[^']+'|.")
 RULE_NAME_CHARS = ascii_lowercase + '_'
 TOKTYPE_CHARS = ascii_uppercase + '_'
+
+
+def get_handler_name(
+        rule_name: str,
+        pattern_name: Optional[str] = None,
+        handler_prefix: Optional[str] = None,
+        ) -> str:
+    if handler_prefix:
+        pattern_name = (
+            f'{handler_prefix}__{pattern_name}'
+            if pattern_name else handler_prefix)
+    return (
+        f'on_{pattern_name}__{rule_name}' if pattern_name
+        else f'on_{rule_name}')
 
 
 GrammarPatternPartType = (
@@ -440,12 +455,7 @@ class ParseMatch(NamedTuple):
 
     @property
     def handler_name(self) -> str:
-        return GrammarEvaluator.get_handler_name(self.rule_name, self.pattern_name)
-
-    def missing_handler(self) -> ParseError:
-        # For when we're missing the GrammarEvaluator method which would
-        # have handled evaluating this match...
-        return ParseError(self.token, f"Missing handler: {self.handler_name}")
+        return get_handler_name(self.rule_name, self.pattern_name)
 
     def find(self, spec: str, **kwargs) -> Optional['ParseMatch']:
         matches = self.findall(spec, **kwargs)
@@ -1031,25 +1041,34 @@ class GrammarEvaluator:
     pattern_callbacks: dict[PatternCallbackKey, tuple[PatternEnterCallback, PatternExitCallback]] = None
     toktype_predicates: dict[str, TokenPredicate] = None
     pass_through_exceptions: tuple[Type[Exception], ...] = ()
+    handler_prefixes: tuple[str, ...] = ()
 
     def __init__(self):
         self.validate()
         self._pass_through_exceptions = self.pass_through_exceptions + (ParseError,)
+        self.handler_prefix = None
 
     def warn(self, msg: str):
         print(f"=== WARNING: {msg}")
 
-    @staticmethod
-    def get_handler_name(rule_name: str, pattern_name: Optional[str] = None) -> str:
-        return (
-            f'on_{pattern_name}__{rule_name}' if pattern_name
-            else f'on_{rule_name}')
+    @contextmanager
+    def use_handler_prefix(self, prefix: str):
+        old_prefix = self.handler_prefix
+        self.handler_prefix = prefix
+        try:
+            yield
+        finally:
+            self.handler_prefix = old_prefix
+
+    def get_handler_name(self, match: ParseMatch) -> str:
+        return get_handler_name(match.rule_name, match.pattern_name,
+            self.handler_prefix)
 
     def get_unimplemented_handlers(self) -> list[str]:
         # NOTE: use a dict to remove duplicates (unlike list) while
         # preserving order (unlike set)
         possible_handler_names = {
-            self.get_handler_name(rule_name, pattern.name): True
+            get_handler_name(rule_name, pattern.name): True
             for rule_name, rule in self.grammar_rules.items()
             for pattern in rule.patterns}
         return [name for name in possible_handler_names
@@ -1058,7 +1077,8 @@ class GrammarEvaluator:
     def validate(self):
         bad_handler_names = []
         possible_handler_names = {
-            self.get_handler_name(rule_name, pattern.name)
+            get_handler_name(rule_name, pattern.name, handler_prefix)
+            for handler_prefix in (None,) + self.handler_prefixes
             for rule_name, rule in self.grammar_rules.items()
             for pattern in rule.patterns}
         for attr in dir(self):
@@ -1140,10 +1160,20 @@ class GrammarEvaluator:
 
     def default(self, match: ParseMatch):
         # NOTE: subclasses may want to override this method
-        raise match.missing_handler()
+        raise self.missing_handler(match)
+
+    def missing_handler(self, match: ParseMatch) -> ParseError:
+        # For when we're missing the GrammarEvaluator method which would
+        # have handled evaluating this match...
+        raise ParseError(match.token, f"Missing handler: {self.get_handler_name(match)}")
 
     def on(self, match: ParseMatch):
-        handler_name = self.get_handler_name(match.rule_name, match.pattern_name)
+        pattern_name = match.pattern_name
+        if self.handler_prefix:
+            pattern_name = (
+                f'{self.handler_prefix}__{pattern_name}'
+                if pattern_name else self.handler_prefix)
+        handler_name = self.get_handler_name(match)
         handler = getattr(self, handler_name, None)
         try:
             if handler is not None:

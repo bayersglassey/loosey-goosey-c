@@ -227,10 +227,14 @@ type_qualifier
     | [ 'const' 'volatile' ]
     ;
 
+declarator_identifier
+    | declare: IDENTIFIER
+    ;
+
 declarator_suffix
     | array:   '[' ( constant_expression )? ']'
     | params:  '(' ( parameter_type_list )? ')'
-    | idents:  '(' identifier_list ')'
+    | params:  '(' declarator_identifier ( ',' declarator_identifier )* ')'
     ;
 
 direct_declarator
@@ -263,10 +267,6 @@ parameter_declaration
     | declaration_specifiers declarator
     | declaration_specifiers abstract_declarator
     | declaration_specifiers
-    ;
-
-identifier_list
-    | IDENTIFIER ( ',' IDENTIFIER )*
     ;
 
 type_name
@@ -360,8 +360,17 @@ function_definition
     ;
 
 repl_command
-    | translation_unit
-    | expression ( ';' )?
+    | function_definition
+    | declaration
+    | statement
+    ;
+
+repl_expression
+    | trailing: expression
+    ;
+
+repl_commands
+    | ( repl_command )* ( repl_expression )?
     ;
 
 translation_unit

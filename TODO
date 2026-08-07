@@ -125,9 +125,13 @@
           *
           ident: p
 
-    [ ] Handle references correctly (e.g. `x += 1`, `&x`)
+    [X] Handle references correctly (e.g. `x += 1`, `&x`)
         See: on_assign__assignment_expression, the '+=' case
         See: MiniC.on_unary_expression, the '&' case
+
+    [ ] Handle postfix increment/decrement correctly?!..
+        Omg. How is the semantics even defined, and can we do that within our
+        current "ParseMatch visiting" approach?..
 
     [ ] Support multiple call stacks!.. just in case we ever want to have
         threads etc.
@@ -150,8 +154,8 @@
     [ ] Support conversion to/from bytes
         See: MiniC.on_cast__cast_expression
 
-    [ ] Support strings... [...] should find a NUL byte at the end of Python
-        str/bytes objects...
+    [ ] Support strings... my_string[...] should find a NUL byte at the end
+        of Python str/bytes objects...
 
     [ ] Figure out how to implement libraries in Python, e.g. stdio.h,
         stdlib.h, etc.
@@ -167,6 +171,14 @@
         operations... so if we allocate some memory with calloc, or
         malloc+memset, we can use it like an array of numbers
 
+    [ ] We proooobably can't get away with using our magic Struct in all
+        cases... like if we use it where someone expected a union, and they
+        try to cast to one of the union members, that won't work properly...
+        So we probably need a Union type, which has at most one key at any
+        given time...
+
+    [ ] Support variadic functions
+
 [ ] Add C99 support!.. where can we find a grammar for it?
 
 [ ] Add support for some GCC extensions, like ({ ... }).
@@ -175,3 +187,6 @@
 
 [ ] Look at Yacc's implementation (or any papers on it), see what their
 approach is... backtracking?..
+
+[ ] Can g++ be convinced to output C?.. i.e. can we use it in the same
+    way that C++ was originally a fancy C preprocessor?
