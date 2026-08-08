@@ -1,3 +1,4 @@
+import sys
 import inspect
 from typing import Any, Optional, NamedTuple, Iterator
 from functools import cached_property
@@ -1225,8 +1226,11 @@ def main():
         progname = args.progname or (args.filename if args.filename != '-' else 'main')
         argv = [progname] + args.main_args
         retcode = main_func(len(argv), argv)
-        if retcode not in (None, 0):
-            raise Exception(f"Got nonzero exit code from main(): {retcode!r}")
+        if retcode is None:
+            retcode = 0
+        elif not isinstance(retcode, int):
+            raise Exception(f"Got non-integer exit code from main(): {retcode!r}")
+        sys.exit(retcode)
 
 
 if __name__ == '__main__':

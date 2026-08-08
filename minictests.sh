@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -euo pipefail
 
 die() {
@@ -70,7 +71,7 @@ else
 fi
 
 actual() {
-    prog "$1"
+    prog "$1" || die "Non-zero exit code: $?"
 }
 
 expected() {

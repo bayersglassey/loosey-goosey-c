@@ -97,7 +97,7 @@ probably a [packrat parser](https://en.wikipedia.org/wiki/Packrat_parser):
 The interpreter's code lives here:
 * [mini.py](/src/loosey/mini.py)
 
-Example usage:
+Example usage (from Python REPL):
 ```python
 >>> from loosey.mini import MiniC
 >>> mini = MiniC()
@@ -160,4 +160,18 @@ add(x, y)
 >>> ptr = mkptr()
 >>> ptr.contents.x
 3
+```
+
+Example usage (from commandline):
+```bash
+$ cat hello.c
+#include <stdio.h>
+int main(int argc, char **argv) {
+    const char *name = argv[1];
+    printf("Hello, %s!\n", name);
+    return 0;
+}
+
+$ python -m loosey.mini -f hello.c -- world
+Hello, world!
 ```
