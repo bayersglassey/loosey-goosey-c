@@ -99,7 +99,7 @@ The interpreter's code lives here:
 
 Example usage (from Python REPL):
 ```python
->>> from loosey.mini import MiniC
+>>> from loosey.mini import MiniC, Pointer
 >>> mini = MiniC()
 
 >>> mini.eval('1 + 2')
@@ -143,23 +143,37 @@ add(x, y)
 3
 
 # Creating a pointer in Python and passing it to C code:
->>> ptr = mini.malloc()
->>> ptr.contents.x = 3
->>> ptr_test = mini.eval('void ptr_test(void *ptr) { ptr->x += 1; }')
->>> ptr_test(ptr)
->>> ptr.contents.x
-4
+>>> ptr = Pointer(3)
+>>> mini.eval('void f(void *ptr) { *ptr += 1; }')(ptr)
+>>> ptr
+Pointer(4)
 
-# Creating a pointer in C code and returning it to Python:
+# Creating a data structure in C code and returning it to Python:
 >>> mkptr = mini.eval("""
 ... void *mkptr() {
 ...     void *ptr = malloc(1);
 ...     ptr->x = 3;
+...     ptr->y = 4;
 ...     return ptr;
 ... }""")
->>> ptr = mkptr()
->>> ptr.contents.x
+>>> obj = mkptr().contents
+>>> obj.x
 3
+>>> obj.y
+4
+
+# Allocating an array of data structures in Python and passing them to C code:
+>>> ptr = mini.malloc(3)
+>>> for i in range(3):
+...     ptr[i].x = i * 2
+...     ptr[i].y = i * 5
+>>> mini.eval(r"""f(struct t *objs) {
+...     int i;
+...     for (i = 0; i < 3; i += 1) printf("%i, %i\n", objs[i].x, objs[i].y);
+... }""")(ptr)
+0, 0
+2, 5
+4, 10
 ```
 
 Example usage (from commandline):
