@@ -7,7 +7,3 @@ M(1)
 #include "include-test.h"
 
 M(2)
-
-###################
-aaa [ 1 ] B ( 1 )
-A ( 2 ) bbb [ 2 ]

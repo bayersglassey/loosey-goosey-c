@@ -149,7 +149,7 @@ type_specifier
     ;
 
 type_qualifier
-    | [ 'const' 'volatile' ]
+    | [ 'const' 'volatile' 'restrict' ]
     ;
 
 init_declarator
@@ -302,8 +302,12 @@ statement
     | expression_statement
     ;
 
+label_name
+    | IDENTIFIER
+    ;
+
 labeled_statement
-    | label:    IDENTIFIER ':' statement
+    | label:    label_name ':' statement
     | case:     'case' constant_expression ':' statement
     | default:  'default' ':' statement
     ;

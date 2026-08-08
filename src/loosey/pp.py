@@ -16,6 +16,7 @@ import sys
 from typing import NamedTuple, Iterable, Iterator, Optional
 from argparse import ArgumentParser
 
+from loosey import get_data_filepath
 from loosey.iter import FancyIterator
 from loosey.pplex import (
     INCLUDE_REGEX,
@@ -505,13 +506,19 @@ class Preprocessor:
             sys_dirs: Iterable[str] = (),
             local_dir: Optional[str] = None,
             macros: Optional[dict[str, Macro]] = None,
+            add_default_sys_dirs: bool = True,
             ):
         self.quiet = quiet
         self.warn_stdout = warn_stdout
         self.add_debug_nodes = add_debug_nodes
 
         # Directories used for #include <...>
-        self.sys_dirs = tuple(sys_dirs)
+        sys_dirs = tuple(sys_dirs)
+        if add_default_sys_dirs:
+            sys_dirs += (
+                get_data_filepath('include'),
+            )
+        self.sys_dirs = sys_dirs
 
         # Directory used for #include "..."
         self.local_dir = local_dir
@@ -1299,20 +1306,31 @@ class GrammarEvaluatorWithPreprocessor(GrammarEvaluator):
 
     """
 
-    def __init__(self, **kwargs):
+    pp_cls = Preprocessor
+
+    def __init__(self, *, pp_kwargs=None, **kwargs):
         super().__init__(**kwargs)
-        self.pp = Preprocessor()
+        self.pp = self.pp_cls(**(pp_kwargs or {}))
 
     def coerce_lines(self, lines: list[str]) -> list[Token]:
         return list(self.pp.process(lines))
+
+
+def get_local_dir_from_args(args) -> str:
+    if args.local_dir is not None:
+        return args.local_dir
+    elif args.filename != '-':
+        return os.path.dirname(args.filename)
+    else:
+        return '.'
 
 
 def main():
     parser = ArgumentParser()
     parser.add_argument('-f', '--filename', default='-', help="Use '-' for stdin")
     parser.add_argument('--local-dir', help="Directory used for #include \"...\"")
-    parser.add_argument('-i', '--token-info', default=False, action='store_true')
     parser.add_argument('-I', '--include-sys', default=[], action='append')
+    parser.add_argument('-i', '--token-info', default=False, action='store_true')
     parser.add_argument('-t', '--tree', default=False, action='store_true')
     parser.add_argument('-l', '--lex-only', default=False, action='store_true')
     parser.add_argument('-q', '--quiet', default=False, action='store_true')
@@ -1322,17 +1340,11 @@ def main():
     args = parser.parse_args()
     filename = args.filename
     try:
-        if args.local_dir is not None:
-            local_dir = args.local_dir
-        elif filename != '-':
-            local_dir = os.path.dirname(filename)
-        else:
-            local_dir = '.'
         pp = Preprocessor(
             quiet=args.quiet,
             warn_stdout=args.warn_stdout,
             add_debug_nodes=args.debug,
-            local_dir=local_dir,
+            local_dir=get_local_dir_from_args(args),
             sys_dirs=args.include_sys,
         )
         lines = tokenize_file(filename)

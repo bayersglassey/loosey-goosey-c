@@ -7,7 +7,10 @@ from argparse import ArgumentParser
 from loosey import get_data_filepath
 from loosey.grammar import ParseMatch
 from loosey.pplex import Token, ParseError
-from loosey.pp import GrammarEvaluatorWithPreprocessor
+from loosey.pp import (
+    GrammarEvaluatorWithPreprocessor,
+    get_local_dir_from_args,
+)
 
 
 GRAMMAR_FILENAME = get_data_filepath('ansi-c-grammar.txt')
@@ -535,7 +538,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # Define some default macros
+        # Define some default macros, which GCC seems to define on my system
         self.pp.execute('#define __restrict')
         self.pp.execute('#define __extension__')
         self.pp.execute('#define __attribute__(...)')
@@ -550,10 +553,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.global_scope: dict[str, Pointer] = {}
         self.scopes: list[dict[str, Pointer]] = [self.global_scope]
 
-        # Add some default stdlib functions
-        def _add_func(func):
-            func_obj = PythonFunction(func)
+        def _add_func(func, name=None):
+            func_obj = PythonFunction(func, name)
             self.global_scope[func_obj.name] = Pointer(MemoryBlock(func_obj, size=1))
+
+        # This function can be used e.g. in parts of the stdlib which we
+        # haven't implemented yet, to raise a Python exception
+        _add_func(self.runtime_error, '__loosey_error__')
+
+        # Add some default stdlib functions
         _add_func(self.malloc)
         _add_func(self.calloc)
         _add_func(self.realloc)
@@ -637,6 +645,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         finally:
             assert self.scopes.pop() is scope
 
+    def have_var(self, name: str) -> bool:
+        for scope in reversed(self.scopes):
+            if name in scope:
+                return True
+        return False
+
     def get_var(self, name: str, default=NO_DEFAULT) -> Value:
         """Get the value of the indicated variable (including functions,
         typedefs, etc)"""
@@ -666,6 +680,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             scope[name] = Pointer(MemoryBlock(value, size=1))
 
+    def runtime_error(self, msg: str):
+        # NOTE: this function is available to C code as __loosey_error__
+        raise Exception(msg)
+
     def malloc(self, size: int = 1) -> Pointer:
         return Pointer(MemoryBlock(size=size))
 
@@ -687,8 +705,20 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             ptr.free()
 
     def printf(self, fmt: str, *args):
-        # TODO: parse the fmt, etc...
-        print(f"=== PRINTF: {fmt!r} {args!r}")
+        r"""
+
+            >>> mini = MiniC()
+            >>> mini.printf('Hello %s\n', 'world')
+            Hello world
+            >>> mini.printf('%i + %i = %i', 1, 2, 3)
+            1 + 2 = 3
+            >>> mini.printf('[%c]', 65)
+            [A]
+
+        """
+        # TODO: use a proper C format-string parser...
+        msg = str(fmt) % args
+        print(msg, end='')
 
     def fprintf(self, file, fmt: str, *args):
         self.printf(fmt, *args)
@@ -764,11 +794,20 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 value_match = child.find('assign:initializer .')
                 if value_match:
                     value = self.on(value_match)
+                    self.set_var(name, value)
                 else:
-                    # Uninitialized variables are assigned a magic Struct object
-                    # which allows you to access arbitrary "fields"...
-                    value = Struct()
-                self.set_var(name, value)
+                    scope = self.scopes[-1]
+                    if name in scope:
+                        # This variable is already initialized!.. so don't
+                        # overwrite with a fresh Struct.
+                        # In particular, we don't want to have function
+                        # prototypes overwrite the actual functions!..
+                        value = scope[name]
+                    else:
+                        # Uninitialized variables are assigned a magic Struct
+                        # which allows you to access arbitrary "fields"...
+                        value = Struct()
+                        self.set_var(name, value)
                 intialized_values[name] = value
 
         return intialized_values
@@ -898,6 +937,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 self.on(func.body)
             except Return as ret:
                 return ret.value
+            except Goto as goto:
+                label = func.labels.get(goto.label_name)
+                if label is None:
+                    raise Exception(f"Label {goto.label_name!r} not found in func: {func}")
+                # TODO: implement goto...
+                raise Exception(f"Goto not implemented yet, but label {goto.label_name!r} was found in func: {func}")
 
     def on_literal__primary_expression(self, match: ParseMatch) -> Value:
         token = match.token
@@ -920,10 +965,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     on_block__compound_statement = _eval_children
     on_statement_list = _eval_children
     on_translation_unit = _eval_children
-    on_label__labeled_statement = _eval_children
     on_expression = _eval_children
     on_expression_statement = _eval_children
     on_trailing__repl_expression = _eval_children
+
+    def on_label__labeled_statement(self, match: ParseMatch) -> Value:
+        return self.on(match.children[1])
 
     def on_return__jump_statement(self, match: ParseMatch) -> Value:
         if match.children:
@@ -1090,12 +1137,19 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 def main():
     parser = ArgumentParser()
     parser.add_argument('-f', '--filename', default='-')
+    parser.add_argument('--local-dir', help="Directory used for #include \"...\"")
+    parser.add_argument('-I', '--include-sys', default=[], action='append')
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     parser.add_argument('-p', '--parse-only', default=False, action='store_true')
     parser.add_argument('--partial', default=False, action='store_true')
     args = parser.parse_args()
 
-    mini = MiniC()
+    pp_kwargs = dict(
+        local_dir=get_local_dir_from_args(args),
+        sys_dirs=args.include_sys,
+    )
+
+    mini = MiniC(pp_kwargs=pp_kwargs)
     if args.parse_only:
         match = mini.parse_file(
             args.filename,
@@ -1106,6 +1160,13 @@ def main():
         match.pprint()
     else:
         mini.eval_file(args.filename)
+        main_func = mini.globals().get('main')
+        if main_func is None:
+            raise Exception("No main() function found!")
+        else:
+            retcode = main_func()
+            if retcode not in (None, 0):
+                raise Exception(f"Got nonzero exit code from main(): {retcode!r}")
 
 
 if __name__ == '__main__':

@@ -216,6 +216,30 @@
 
     [ ] Support variadic functions
 
+    [ ] Support goto... but how?! We can find labels within functions,
+        but how are we going to like... reproduce the Python callstack
+        which is usually in place?!..
+        E.g. in the following, if we `goto some_label`, we should then
+        find ourselves inside a while loop. O_o
+
+            while (1) {
+                some_label: y = 4;
+            }
+
+        Or even here,
+
+            {
+                x = 1;
+                some_label: y = 2;
+                z = 3;
+            }
+
+        ...the 3 assignments are 3 ParseMatch children of the {...}.
+        So how do we jump into the middle of the Python handler for that
+        {...} (i.e. on_block__compound_statement)?..
+
+        See also: minictests/goto.c
+
 [ ] Add C99 support!.. where can we find a grammar for it?
 
 [ ] Add support for some GCC extensions, like ({ ... }).

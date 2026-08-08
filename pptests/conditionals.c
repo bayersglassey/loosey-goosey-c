@@ -66,7 +66,3 @@
         BAD
     #endif
 #endif
-
-
-#########################
-OK OK OK OK OK OK OK

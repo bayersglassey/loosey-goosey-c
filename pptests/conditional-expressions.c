@@ -57,6 +57,3 @@
 #if ADD(1, -1)
     BAD
 #endif
-
-###################
-OK OK OK OK OK OK OK
