@@ -44,7 +44,7 @@ Imagine doctests for your C code.
 Here are some projects I've played with or looked at, but didn't quite get
 what I needed from:
 
-* clang-repl: https://clang.llvm.org/docs/ClangRepl.html
+* clang-repl (formerly "cling"): https://clang.llvm.org/docs/ClangRepl.html
 * pycparser: https://github.com/eliben/pycparser
 
 
