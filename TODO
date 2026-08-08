@@ -138,6 +138,13 @@
 
         ...does argparse have built-in `--` support?.. YES!.. kind of
 
+    [X] Make sure assignment (including function parameter passing) is done
+        by *copying* values...
+
+        [X] Struct is too magic!.. make it dict-like, and then MiniC should
+            check for Struct instances, and use value.fields[attr] on them,
+            instead of getattr.
+
     [ ] Handle postfix increment/decrement correctly?!..
         Omg. How is the semantics even defined, and can we do that within our
         current "ParseMatch visiting" approach?..
@@ -212,6 +219,11 @@
         NOTE: we've got the .h files now, in src/loosey/data/include/,
         but we need a way to also specify whether the function definitions
         etc should be added to a given MiniC instance...
+
+    [ ] Probably string literals should be turned into Python bytes, not str?..
+        And printf etc should write bytes, or ASCII?..
+        I think writing bytes can't be done in a cross-platform way, because
+        on Windows you can't re-open stdout, or something...
 
     [ ] Support array/struct initializers {...}
         ...presumably requires parsing of struct declarations!

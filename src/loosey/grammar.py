@@ -26,6 +26,9 @@ RULE_NAME_CHARS = ascii_lowercase + '_'
 TOKTYPE_CHARS = ascii_uppercase + '_'
 
 
+VERBOSITY_STYLE = 2 # 1 or 2
+
+
 def get_handler_name(
         rule_name: str,
         pattern_name: Optional[str] = None,
@@ -440,6 +443,12 @@ class ParseMatch(NamedTuple):
     def __repr__(self):
         return f'{self.__class__.__name__}({self.prettystring()})'
 
+    @property
+    def unique_id(self) -> str:
+        # Unique ID for this ParseMatch across all parses in this Python
+        # VM, for use e.g. as a cache key
+        return f"{self.token.file.unique_id}:{self.token_i}"
+
     def prettystring(self):
         if self.children:
             children_s = ' '.join(child.prettystring() for child in self.children)
@@ -470,7 +479,7 @@ class ParseMatch(NamedTuple):
         matches = self.findall(spec, **kwargs)
         return None if not matches else matches[0]
 
-    def findall(self, spec: str, *, verbose: bool = False) -> list['ParseMatch']:
+    def findall(self, spec: str, *, sorted: bool = False, verbose: bool = False) -> list['ParseMatch']:
 
         # Parse the spec into "parts", each part being a tuple:
         #   (rule_name, pattern_name, suffix)
@@ -527,6 +536,8 @@ class ParseMatch(NamedTuple):
                 break
         # If we're out of parts, then we've successfully applied the entire
         # spec, so return whatever matches we have
+        if sorted:
+            matches.sort(key=lambda match: match.token_i)
         return matches
 
 
@@ -794,7 +805,7 @@ class GrammarParser:
             if self.main_rule_name is None:
                 raise Exception("No rule specified")
             rule_name = self.main_rule_name
-        if self.verbose:
+        if VERBOSITY_STYLE == 1 and self.verbose:
             print('. ' * self.match_depth + f"RULE: {rule_name}")
         rule = self.rules[rule_name]
         self.increase_match_depth()
@@ -821,15 +832,19 @@ class GrammarParser:
     def match_pattern(self, rule_name: str, pattern_i: int, token_i: int) -> Optional[ParseMatch]:
         rule = self.rules[rule_name]
         pattern = rule.patterns[pattern_i]
-        if self.verbose:
+        pattern_name = pattern.name
+        if VERBOSITY_STYLE == 1 and self.verbose:
             print('. ' * self.match_depth + f"PATTERN {pattern_i}: {pattern.prettystring()}")
 
         # If we already have a cached result, just return that
         cache_key = (rule_name, pattern_i, token_i)
         if cache_key in self.match_cache:
-            if self.verbose:
+            match = self.match_cache[cache_key]
+            if VERBOSITY_STYLE == 1 and self.verbose:
                 print('. ' * self.match_depth + "FOUND IN CACHE!")
-            return self.match_cache[cache_key]
+            if match is not None and VERBOSITY_STYLE == 2 and self.verbose:
+                print('. ' * self.match_depth + f"FOUND IN CACHE: {match.spec}")
+            return match
 
         # Make sure that when we return a value, we add it to the cache
         def cached(value):
@@ -864,7 +879,7 @@ class GrammarParser:
                         # rule
                         match = self.match_rule(part_value, token_i)
                         if match is None:
-                            if self.verbose:
+                            if VERBOSITY_STYLE == 1 and self.verbose:
                                 print('. ' * self.match_depth + "NOT MATCH")
                             return None
                         assert match.token_i == token_i
@@ -872,7 +887,7 @@ class GrammarParser:
                         children.append(match)
                     elif part_type == 'maybe':
                         # Zero or one matches of subpattern
-                        if self.verbose:
+                        if VERBOSITY_STYLE == 1 and self.verbose:
                             print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {part_value.prettystring()}")
                         result = match_subpattern(part_value, token_i)
                         if result:
@@ -880,7 +895,7 @@ class GrammarParser:
                             children.extend(sub_children)
                     elif part_type == 'star':
                         # Zero or more matches of subpattern
-                        if self.verbose:
+                        if VERBOSITY_STYLE == 1 and self.verbose:
                             print('. ' * self.match_depth + f"SUB-PATTERN ({part_type}): {part_value.prettystring()}")
                         while True:
                             result = match_subpattern(part_value, token_i)
@@ -892,7 +907,7 @@ class GrammarParser:
                     else:
                         # Matching against a single token
                         if token_i >= len(self.tokens):
-                            if self.verbose:
+                            if VERBOSITY_STYLE == 1 and self.verbose:
                                 print('. ' * self.match_depth + "END OF INPUT")
                             return None
                         if self.longest_match is None or token_i > self.longest_match.token_i:
@@ -902,7 +917,7 @@ class GrammarParser:
                                 token_i=token_i,
                             )
                         token = self.tokens[token_i]
-                        if self.verbose:
+                        if VERBOSITY_STYLE == 1 and self.verbose:
                             print('. ' * self.match_depth + f"TOKEN: {token.location()}: {token.value!r}")
                         if part_type == 'toktype':
                             # Match against token's toktype
@@ -912,18 +927,18 @@ class GrammarParser:
                                 if toktype_predicate is None else
                                 not toktype_predicate(token)
                             ):
-                                if self.verbose:
+                                if VERBOSITY_STYLE == 1 and self.verbose:
                                     print('. ' * self.match_depth + "NOT MATCH")
                                 return None
                         elif part_type == 'tokvalue':
                             # Match against token's value
                             if token.value != part_value:
-                                if self.verbose:
+                                if VERBOSITY_STYLE == 1 and self.verbose:
                                     print('. ' * self.match_depth + "NOT MATCH")
                                 return None
                         elif part_type == 'oneof':
                             if token.value not in part_value:
-                                if self.verbose:
+                                if VERBOSITY_STYLE == 1 and self.verbose:
                                     print('. ' * self.match_depth + "NOT MATCH")
                                 return None
                         else:
@@ -931,7 +946,9 @@ class GrammarParser:
                             raise Exception(f"Unrecognized pattern part type: {part_type!r}")
                         # ...we matched against a single token!
                         token_i += 1
-                if self.verbose:
+                        if VERBOSITY_STYLE == 2 and self.verbose:
+                            print('. ' * self.match_depth + f"TOKEN MATCH: {token.location()}: {token.value!r}")
+                if VERBOSITY_STYLE == 1 and self.verbose:
                     thing = 'RULE' if subpattern is pattern else 'SUB-PATTERN'
                     print('. ' * self.match_depth + f"{thing} MATCHED!")
                 return children, token_i
@@ -977,6 +994,8 @@ class GrammarParser:
                     n_tokens=token_i - original_token_i,
                     children=children,
                 ))
+            if VERBOSITY_STYLE == 2 and self.verbose:
+                print('. ' * self.match_depth + f"MATCH: {match.spec}")
             return match
         finally:
             assert self.match_stack.pop() == cache_key

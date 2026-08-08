@@ -27,6 +27,7 @@
 import re
 import sys
 import json
+from uuid import uuid4
 from ast import literal_eval
 from typing import NamedTuple, Iterable, Iterator, Optional
 
@@ -47,8 +48,18 @@ def to_char_literal(s: str) -> str:
     return repr(s)
 
 
+def generate_unique_id() -> str:
+    return str(uuid4())
+
+
 class SourceFile(NamedTuple):
     filename: str
+
+    # Every time we parse a file, we generate a unique ID for it.
+    # This lets us create cache keys for things derived from a parse,
+    # like Token, ParseMatch, etc.
+    # See also: generate_unique_id
+    unique_id: str
 
     # If we were imported from another file
     parent: Optional['SourceFile'] = None
@@ -77,6 +88,10 @@ class Token(NamedTuple):
     parents: TokenParents = ()
 
     @property
+    def file(self) -> SourceFile:
+        return self.line.file
+
+    @property
     def parent_depth(self) -> int:
         depth = 0
         parents = self.parents
@@ -92,7 +107,8 @@ class Token(NamedTuple):
         return Token(
             toktype=toktype,
             value=value,
-            line=SourceLine(file=SourceFile('<fakefile>')),
+            line=SourceLine(file=SourceFile('<fakefile>',
+                unique_id=generate_unique_id())),
         )
 
     @staticmethod
@@ -427,7 +443,7 @@ class Lexer:
 
     def __init__(self, file: SourceFile | str = '<fakefile>'):
         if isinstance(file, str):
-            file = SourceFile(filename=file)
+            file = SourceFile(filename=file, unique_id=generate_unique_id())
         self.file = file
         self.row = 1
 

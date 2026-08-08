@@ -37,6 +37,56 @@ def value_as_bool(value: Value) -> bool:
         return True
 
 
+def copy_value(value: Value) -> Value:
+    """Copy a C value"""
+    if isinstance(value, Struct):
+        # Copy the underlying memory for each field
+        return value.copy()
+    elif isinstance(value, bytearray):
+        return copy(value)
+    else:
+        # Everything else, including Pointers, is immutable!..
+        # Also, we treat arbitrary Python objects as if they were pointers,
+        # so they're "immutable" too from the perspective of our C code.
+        return value
+
+
+class Declarator(NamedTuple):
+    """E.g. `x` or `*x` or `x = 1`, etc"""
+    name: str
+    match: ParseMatch
+    value_match: Optional[ParseMatch]
+
+
+class Declaration:
+    """E.g. `const int x, *y` or `typedef struct T T` or `int x = 1, y = 2`"""
+
+    def __init__(self, match: ParseMatch):
+        assert match.rule_name == 'declaration'
+        self.match = match
+
+        # The declaration specifiers, e.g. 'int'
+        self.declspec = match.find('declaration_specifiers')
+
+        # Looking for specifiers like 'typedef', 'extern', 'const', etc
+        self.specifiers: set[str] = {child.token.value
+            for child in
+                self.declspec.findall('storage_class_specifier')
+                + self.declspec.findall('type_qualifier')}
+        self.is_typedef = 'typedef' in self.specifiers
+
+        self.declarators: list[Declarator] = []
+        for child in match.findall('init_declarator_list? init_declarator'):
+            declarator_match = child.children[0]
+            name = (declarator_match.find('.* declare:.') or declarator_match).token.value
+            value_match = child.find('assign:initializer .')
+            self.declarators.append(Declarator(
+                name=name,
+                value_match=value_match,
+                match=declarator_match,
+            ))
+
+
 class TypeDef(NamedTuple):
     name: str
 
@@ -122,6 +172,9 @@ class Goto(Exception):
 class SegmentationFault(IndexError): pass
 
 
+_STRUCT_POINTER_REPR_DEPTH = 4
+
+
 class Struct:
     """Can be used as a struct or union by MiniC.
     Automatically creates new fields as they are referenced.
@@ -129,45 +182,74 @@ class Struct:
         >>> obj = Struct()
         >>> obj
         Struct()
-        >>> obj.x = 2
-        >>> obj.x
+        >>> obj['x'] = 2
+        >>> obj['x']
         2
-        >>> obj.y
+        >>> obj['y']
         Struct()
         >>> obj
-        Struct(x, y)
+        Struct(x=2, y=Struct())
+
+        If the nesting is too deep, the repr will be truncated:
+        >>> obj = Struct()
+        >>> obj['a']['b']['c']['d']['e']['f'] = 3
+        >>> obj
+        Struct(a=Struct(b=Struct(c=Struct(d=Struct(e)))))
+
+        For convenience, you can set struct fields when calling its
+        constructor:
+        >>> Struct(msg='hello', ptr=Pointer(Struct(x=1, y=2)))
+        Struct(msg='hello', ptr=Pointer(Struct(x=1, y=2)))
 
     """
 
-    def __init__(self):
-        # Each field is a Pointer, currently always of unbounded size, to
-        # support array fields
-        self.__dict__['fields'] = {}
+    def __init__(self, **kwargs):
+        self.fields: dict[str, Pointer] = {
+            attr: Pointer(value)
+            for attr, value in kwargs.items()}
 
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({', '.join(self.fields)})"
-
-    def __setattr__(self, attr: str, value: Value):
-        ptr = self._struct_get_field_pointer(attr)
-        ptr.contents = value
-
-    def _struct_get_field_pointer(self, attr: str) -> 'Pointer':
+    def get_or_create_field(self, attr: str) -> 'Pointer':
         if attr in self.fields:
             return self.fields[attr]
         else:
+            # NOTE: we don't use just Pointer(Struct()), because that would
+            # create a MemoryBlock with size=1, whereas in order to support
+            # array fields, we want an auto-growing MemoryBlock (i.e. one
+            # with size=None).
             ptr = self.fields[attr] = Pointer(MemoryBlock(Struct()))
             return ptr
 
-    def __getattr__(self, attr: str) -> Value:
-        if attr == '_ipython_canary_method_should_not_exist_':
-            # ipython checks for this, which is annoying...
-            # We don't want to create a field for it, since that shows
-            # up in our __repr__.
-            # We raise Exception, not AttributeError, to convince iPython
-            # to stop poking at us looking for more weird methods.
-            raise Exception("No thanks, iPython")
-        ptr = self._struct_get_field_pointer(attr)
+    def mkrepr(self, depth=_STRUCT_POINTER_REPR_DEPTH) -> str:
+        if depth <= 0:
+            parts = list(self.fields)
+        else:
+            parts = []
+            for attr, ptr in self.fields.items():
+                value = ptr.contents
+                if isinstance(value, (Struct, Pointer)):
+                    msg = value.mkrepr(depth - 1)
+                else:
+                    msg = repr(value)
+                parts.append(f'{attr}={msg}')
+        return f"{self.__class__.__name__}({', '.join(parts)})"
+
+    def __repr__(self) -> str:
+        return self.mkrepr()
+
+    def copy(self) -> 'Struct':
+        copy = Struct()
+        for attr, ptr in self.fields.items():
+            # Copy the underlying memory
+            copy.fields[attr] = Pointer(ptr.mem.copy())
+        return copy
+
+    def __getitem__(self, attr: str) -> Value:
+        ptr = self.get_or_create_field(attr)
         return ptr.contents
+
+    def __setitem__(self, attr: str, value: Value):
+        ptr = self.get_or_create_field(attr)
+        ptr.contents = value
 
 
 class MemoryBlock:
@@ -190,6 +272,13 @@ class MemoryBlock:
             self.min_index = self.max_index = 0
 
         self.freed = False
+
+    def copy(self) -> 'MemoryBlock':
+        copy = MemoryBlock(size=self.size)
+        for index, value in self.entries.items():
+            # Copy all values
+            copy.entries[index] = copy_value(value)
+        return copy
 
     def _update_indexes(self, new_index: int):
         self._sorted = False
@@ -341,15 +430,23 @@ class Pointer:
     def freed(self) -> bool:
         return self.mem.freed
 
-    def __repr__(self) -> str:
-        if self.mem.size == 1 and self.index == 0:
-            return f'{self.__class__.__name__}({self.contents!r})'
+    def mkrepr(self, depth=_STRUCT_POINTER_REPR_DEPTH) -> str:
+        if self.mem.size == 1 and self.index == 0 and depth > 0:
+            value = self.contents
+            if isinstance(value, (Struct, Pointer)):
+                msg = value.mkrepr(depth - 1)
+            else:
+                msg = repr(value)
+            return f'{self.__class__.__name__}({msg})'
         msg = f'{self.min_index}..{self.max_index}'
         if self.mem.size is not None:
             msg += ', fixed=True'
         if self.freed:
             msg += ', freed=True'
         return f'{self.__class__.__name__}({msg})'
+
+    def __repr__(self) -> str:
+        return self.mkrepr()
 
     @property
     def contents(self) -> Value:
@@ -381,12 +478,6 @@ class Pointer:
 
     def __getitem__(self, index: int) -> Value:
         return self.mem[self.index + index]
-
-    def __setattribute__(self, attr: str, value: Value):
-        # It's very easy to accidentally set the attribute of a pointer,
-        # instead of the Struct you expected it to be referring to...
-        # So we explicitly reject random attribute assignments.
-        raise AttributeError(f"Can't set attribute {attr!r} of a Pointer!")
 
     def free(self):
         self.mem.free()
@@ -513,24 +604,23 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
     Allocating and interacting with memory & pointers:
 
-        Creating a pointer in Python and passing it to C code:
-        >>> ptr = mini.malloc()
-        >>> ptr.contents.x = 3
-        >>> ptr_test = mini.eval('void ptr_test(void *ptr) { ptr->x += 1; }')
-        >>> ptr_test(ptr)
-        >>> ptr.contents.x
-        4
+        # Creating a pointer in Python and passing it to C code:
+        >>> ptr = Pointer(3)
+        >>> mini.eval('void f(void *ptr) { *ptr += 1; }')(ptr)
+        >>> ptr
+        Pointer(4)
 
-        Creating a pointer in C code and returning it to Python:
-        >>> mkptr = mini.eval('''
-        ... void *mkptr() {
+        # Dynamically allocating a data structure in C code and returning
+        # it to Python:
+        >>> mkobj = mini.eval('''
+        ... void *mkobj() {
         ...     void *ptr = malloc(1);
         ...     ptr->x = 3;
+        ...     ptr->y = 4;
         ...     return ptr;
         ... }''')
-        >>> ptr = mkptr()
-        >>> ptr.contents.x
-        3
+        >>> mkobj()
+        Pointer(Struct(x=3, y=4))
 
     """
 
@@ -563,21 +653,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.global_scope: dict[str, Pointer] = {}
         self.scopes: list[dict[str, Pointer]] = [self.global_scope]
 
-        def _add_func(func, name=None):
-            func_obj = PythonFunction(func, name)
-            self.global_scope[func_obj.name] = Pointer(func_obj)
-
         # This function can be used e.g. in parts of the stdlib which we
         # haven't implemented yet, to raise a Python exception
-        _add_func(self.runtime_error, '__loosey_error__')
+        self.add_python_func(self.runtime_error, '__loosey_error__')
 
         # Add some default stdlib functions
-        _add_func(self.malloc)
-        _add_func(self.calloc)
-        _add_func(self.realloc)
-        _add_func(self.free)
-        _add_func(self.printf)
-        _add_func(self.fprintf)
+        self.add_python_func(self.malloc)
+        self.add_python_func(self.calloc)
+        self.add_python_func(self.realloc)
+        self.add_python_func(self.free)
+        self.add_python_func(self.printf)
+        self.add_python_func(self.fprintf)
 
         # The rules for parsing C typedefs are awful, because they're not
         # purely based on the structure of the grammar, they're also based
@@ -596,6 +682,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             'TYPE_NAME': self.is_type_name_token,
         }
 
+        self.parsed_declarations: dict[str, Declaration] = {}
+
     def parse(self, *args, **kwargs):
         block = set()
         self.typedef_blocks.append(block)
@@ -603,6 +691,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             return super().parse(*args, **kwargs)
         finally:
             assert self.typedef_blocks.pop() is block
+
+    def add_python_func(self, func, name=None):
+        if not isinstance(func, PythonFunction):
+            func = PythonFunction(func, name)
+        self.global_scope[func.name] = Pointer(func)
 
     def globals(self) -> dict[str, Value]:
         return {name: ptr.contents
@@ -629,9 +722,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             return
         if not self.typedef_blocks:
             return
+        declaration = self.parse_declaration(match)
+        if not declaration.is_typedef:
+            return
         typedef_block = self.typedef_blocks[-1]
-        for child in match.findall('.* declare:'):
-            typedef_block.add(child.token.value)
+        for declarator in declaration.declarators:
+            typedef_block.add(declarator.name)
 
     def is_type_name_token(self, token: Token) -> bool:
         if token.toktype != 'IDENTIFIER':
@@ -690,6 +786,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             scope[name] = Pointer(value)
 
+    def parse_declaration(self, match: ParseMatch) -> Declaration:
+        key = match.unique_id
+        declaration = self.parsed_declarations.get(key)
+        if declaration is None:
+            declaration = Declaration(match)
+            self.parsed_declarations[key] = declaration
+        return declaration
+
     def runtime_error(self, msg: str):
         # NOTE: this function is available to C code as __loosey_error__
         raise Exception(msg)
@@ -743,7 +847,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         params = [child.token.value for child in
             # NOTE: might be a parameter_type_list, i.e. (int x, int y), or
             # might be a list of declarator_identifier, i.e. just (x, y)
-            declarator.children[1].findall('.* declare:.')]
+            declarator.children[1].findall('.* declare:.', sorted=True)]
         body = match.find('block:compound_statement')
         variadic = declarator.children[1].find('.* ellipsis') is not None
         function = Function(
@@ -776,34 +880,24 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def on_declaration(self, match: ParseMatch) -> dict[str, Value]:
         intialized_values = {}
 
-        # The declaration specifiers, e.g. 'int'
-        declspec = match.find('declaration_specifiers')
-
-        # Looking for specifiers like 'typedef', 'extern', 'const', etc
-        specifiers: set[str] = {child.token.value
-            for child in
-                declspec.findall('storage_class_specifier')
-                + declspec.findall('type_qualifier')}
-        is_typedef = 'typedef' in specifiers
-
-        for child in match.findall('init_declarator_list? init_declarator'):
-            declarator = child.children[0]
-            name = (declarator.find('.* declare:.') or declarator).token.value
-
-            if is_typedef:
-                # Handle typedefs
+        declaration = self.parse_declaration(match)
+        if declaration.is_typedef:
+            # Handle typedefs
+            for declarator in declaration.declarators:
+                name = declarator.name
                 value = TypeDef(
                     name=name,
-                    declspec=declspec,
-                    declarator=declarator,
+                    declspec=declaration.declspec,
+                    declarator=declarator.match,
                 )
                 self.set_var(name, value)
                 intialized_values[name] = value
-            else:
-                # Handle variable initializations
-                value_match = child.find('assign:initializer .')
-                if value_match:
-                    value = self.on(value_match)
+        else:
+            # Handle variable initializations
+            for declarator in declaration.declarators:
+                name = declarator.name
+                if declarator.value_match:
+                    value = copy_value(self.on(declarator.value_match))
                     self.set_var(name, value)
                 else:
                     scope = self.scopes[-1]
@@ -845,7 +939,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             return self.get_reference(match.children[1])
         value = self.on(match.children[1])
         if op == '+':
-            return value
+            return +value
         elif op == '-':
             return -value
         elif op == '~':
@@ -872,16 +966,18 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             index = self.on(match.children[0])
             return value[index]
         elif match.pattern_name == 'call':
-            param_values = [self.on(child) for child in match.children]
+            param_values = [copy_value(self.on(child))
+                for child in match.children]
             value = self.dereference(value) # handle function pointers
             return value(*param_values)
-        elif match.pattern_name == 'dot':
+        elif match.pattern_name in ('dot', 'arrow'):
             attr = match.children[0].token.value
-            return getattr(value, attr)
-        elif match.pattern_name == 'arrow':
-            value = self.dereference(value)
-            attr = match.children[0].token.value
-            return getattr(value, attr)
+            if match.pattern_name == 'arrow':
+                value = self.dereference(value)
+            if isinstance(value, Struct):
+                return value[attr]
+            else:
+                return getattr(value, attr)
         else:
             # TODO: implement postfix increment/decrement!..
             # Aren't those kind of crazy, though?!.. they require, like...
@@ -903,7 +999,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             if not isinstance(value, Struct):
                 field_msg = ('->' if match.pattern_name == 'arrow' else '.') + attr
                 raise Exception(f"Can only get address-of-field ({field_msg}) from Struct, not from {type(value)}")
-            return value._struct_get_field_pointer(attr)
+            return value.get_or_create_field(attr)
         else:
             raise ParseError(match.token, f"Can't produce an lvalue: {match.prettystring()}")
 
@@ -946,7 +1042,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             try:
                 self.on(func.body)
             except Return as ret:
-                return ret.value
+                return copy_value(ret.value)
             except Goto as goto:
                 label = func.labels.get(goto.label_name)
                 if label is None:
@@ -1097,7 +1193,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         op = match.children[1].token.value
         rhs = self.on(match.children[2])
         if op == '=':
-            value = rhs
+            value = copy_value(rhs)
         elif op == '*=':
             value = lhs.contents * rhs
         elif op == '/=':
@@ -1209,6 +1305,7 @@ def main():
     parser.add_argument('-I', '--include-sys', default=[], action='append')
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     parser.add_argument('-p', '--parse-only', default=False, action='store_true')
+    parser.add_argument('-s', '--parse-silent', default=False, action='store_true')
     parser.add_argument('--partial', default=False, action='store_true')
     parser.add_argument('main_args', nargs='*') # NOTE: takes everything after '--'
     args = parser.parse_args()
@@ -1219,14 +1316,17 @@ def main():
     )
 
     mini = MiniC(pp_kwargs=pp_kwargs)
-    if args.parse_only:
+    if args.parse_only or args.parse_silent:
         match = mini.parse_file(
             args.filename,
             verbose=args.verbose,
             partial=args.partial,
             raise_on_no_match=True,
         )
-        match.pprint()
+        if not args.parse_silent:
+            # Handy if you want to see the parser's verbose output, but not
+            # the pprint of a successful match
+            match.pprint()
     else:
         mini.eval_file(args.filename)
         main_func = mini.globals().get('main')
