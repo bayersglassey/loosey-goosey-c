@@ -310,8 +310,6 @@ label_name
 
 labeled_statement
     | label:    label_name ':' statement
-    | case:     'case' constant_expression ':' statement
-    | default:  'default' ':' statement
     ;
 
 compound_statement
@@ -339,9 +337,17 @@ else_statement
     | else:  'else' statement
     ;
 
+switch_body_statement
+    | case:     'case' constant_expression ':' statement
+    | default:  'default' ':' statement
+    | statement
+    ;
+
 selection_statement
     | if:      'if' '(' expression ')' statement ( else_statement )?
-    | switch:  'switch' '(' expression ')' statement
+    # ANSI says: 'switch' '(' expression ')' statement
+    # ...but we don't support crazy switch statements...
+    | switch:  'switch' '(' expression ')' '{' ( switch_body_statement )* '}'
     ;
 
 iteration_statement

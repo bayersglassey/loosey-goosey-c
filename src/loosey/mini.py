@@ -1232,6 +1232,48 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             assert else_branch.rule_name == 'else_statement'
             self.on(else_branch.children[0])
 
+    def on_switch__selection_statement(self, match: ParseMatch):
+        value_match = match.children[0]
+        body = match.children[1:]
+
+        # Collect the switch cases and default
+        case_matches = []
+        default_match = None
+        for child in body:
+            if child.pattern_name == 'case':
+                case_matches.append(child)
+            elif child.pattern_name == 'default':
+                if default_match is not None:
+                    raise ParseError(child.token, "Multiple defaults for a single switch!")
+                default_match = child
+
+        value = self.on(value_match)
+
+        # Find a case_match, which is either one of the case_matches, or the
+        # default_match, or None
+        for case_match in case_matches:
+            case_value = self.on(case_match.children[0])
+            if case_value == value:
+                break
+        else:
+            case_match = default_match
+
+        if case_match is None:
+            # We didn't match any of the cases, and we don't have a default
+            return
+
+        # Now evaluate all statements in the switch body from case_match
+        # onwards:
+        case_index = body.index(case_match)
+        try:
+            for child in body[case_index:]:
+                if child.pattern_name in ('case', 'default'):
+                    self.on(child.children[-1])
+                else:
+                    self.on(child)
+        except Break:
+            pass
+
     def on_while__iteration_statement(self, match: ParseMatch):
         cond_match, body_match = match.children
         while True:
