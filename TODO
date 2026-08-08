@@ -129,8 +129,14 @@
         See: on_assign__assignment_expression, the '+=' case
         See: MiniC.on_unary_expression, the '&' case
 
-    [ ] Make some basic stdlib headers, without the _Float32 etc stuff which
+    [X] Make some basic stdlib headers, without the _Float32 etc stuff which
         the real ones on my system appear to have
+
+    [X] Pass args along to main(), e.g.
+
+            python loosey.mini -f some_file.c -- arg1 arg2
+
+        ...does argparse have built-in `--` support?.. YES!.. kind of
 
     [ ] Handle postfix increment/decrement correctly?!..
         Omg. How is the semantics even defined, and can we do that within our
@@ -147,6 +153,9 @@
     [ ] Do we need to support multiple translation units?.. currently MiniC
         has a single preprocessor, and so can only really represent a single
         translation unit.
+        Look at `extern` and `static`. Maybe we have a truly global scope,
+        and then a translation-unit-level scope beneath it, and then function
+        call scopes under that...
 
     [ ] Parsing needs better error messages!..
         I think we can probably use a concept of "longest/deepest successful
@@ -200,19 +209,22 @@
         But I don't think we want to automatically do file searching.
         Rather, we want to "register" dict[str, Value] things to include
         names.
+        NOTE: we've got the .h files now, in src/loosey/data/include/,
+        but we need a way to also specify whether the function definitions
+        etc should be added to a given MiniC instance...
 
     [ ] Support array/struct initializers {...}
         ...presumably requires parsing of struct declarations!
-
-    [ ] Struct should probably behave like the number 0 under arithmetic
-        operations... so if we allocate some memory with calloc, or
-        malloc+memset, we can use it like an array of numbers
 
     [ ] We proooobably can't get away with using our magic Struct in all
         cases... like if we use it where someone expected a union, and they
         try to cast to one of the union members, that won't work properly...
         So we probably need a Union type, which has at most one key at any
         given time...
+
+        [ ] Struct should probably behave like the number 0 under arithmetic
+            operations... so if we allocate some memory with calloc, or
+            malloc+memset, we can use it like an array of numbers
 
     [ ] Support variadic functions
 
@@ -245,6 +257,14 @@
 [ ] Add support for some GCC extensions, like ({ ... }).
     And maybe __PRETTY_FUNCTION__.
     Look through CPython for __extension__ for ideas.
+
+    [ ] For ({...}), see:
+        https://gcc.gnu.org/onlinedocs/gcc/Statement-Exprs.html
+        "The last thing in the compound statement should be an expression
+        followed by a semicolon; the value of this subexpression serves as
+        the value of the entire construct.
+        (If you use some other kind of statement last within the braces,
+        the construct has type void, and thus effectively no value.)"
 
 [ ] Look at Yacc's implementation (or any papers on it), see what their
 approach is... backtracking?..

@@ -859,7 +859,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def _postfix_operator(self, value: Value, match: ParseMatch) -> Value:
         assert match.rule_name == 'postfix_operator'
         if match.pattern_name == 'index':
-            index = self.on(match.children[1])
+            index = self.on(match.children[0])
             return value[index]
         elif match.pattern_name == 'call':
             param_values = [self.on(child) for child in match.children]
@@ -1123,6 +1123,63 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             assert else_branch.rule_name == 'else_statement'
             self.on(else_branch.children[0])
 
+    def on_while__iteration_statement(self, match: ParseMatch):
+        cond_match, body_match = match.children
+        while True:
+            cond_value = self.on(cond_match)
+            if not value_as_bool(cond_value):
+                break
+            try:
+                self.on(body_match)
+            except Continue:
+                pass
+            except Break:
+                break
+
+    def on_do__iteration_statement(self, match: ParseMatch):
+        body_match, cond_match = match.children
+        while True:
+            try:
+                self.on(body_match)
+            except Continue:
+                pass
+            except Break:
+                break
+            cond_value = self.on(cond_match)
+            if not value_as_bool(cond_value):
+                break
+
+    def on_empty_expression_statement(self, match: ParseMatch):
+        return None
+
+    def on_for__iteration_statement(self, match: ParseMatch):
+        if len(match.children) == 4:
+            init_match, cond_match, extra_match, body_match = match.children
+        elif len(match.children) == 3:
+            init_match, cond_match, body_match = match.children
+            extra_match = None
+        else:
+            # Should never happen
+            raise Exception(f"For-loop with unexpected number of children: {match}")
+
+        if cond_match.rule_name == 'empty_expression_statement':
+            cond_match = None
+
+        self.on(init_match)
+        while True:
+            if cond_match is not None:
+                cond_value = self.on(cond_match)
+                if not value_as_bool(cond_value):
+                    break
+            try:
+                self.on(body_match)
+            except Continue:
+                pass
+            except Break:
+                break
+            if extra_match is not None:
+                self.on(extra_match)
+
     def on_repl_commands(self, match: ParseMatch) -> Value:
         last_child = match.children[-1]
         value = None
@@ -1137,11 +1194,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 def main():
     parser = ArgumentParser()
     parser.add_argument('-f', '--filename', default='-')
+    parser.add_argument('--progname')
     parser.add_argument('--local-dir', help="Directory used for #include \"...\"")
     parser.add_argument('-I', '--include-sys', default=[], action='append')
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     parser.add_argument('-p', '--parse-only', default=False, action='store_true')
     parser.add_argument('--partial', default=False, action='store_true')
+    parser.add_argument('main_args', nargs='*') # NOTE: takes everything after '--'
     args = parser.parse_args()
 
     pp_kwargs = dict(
@@ -1163,10 +1222,11 @@ def main():
         main_func = mini.globals().get('main')
         if main_func is None:
             raise Exception("No main() function found!")
-        else:
-            retcode = main_func()
-            if retcode not in (None, 0):
-                raise Exception(f"Got nonzero exit code from main(): {retcode!r}")
+        progname = args.progname or (args.filename if args.filename != '-' else 'main')
+        argv = [progname] + args.main_args
+        retcode = main_func(len(argv), argv)
+        if retcode not in (None, 0):
+            raise Exception(f"Got nonzero exit code from main(): {retcode!r}")
 
 
 if __name__ == '__main__':

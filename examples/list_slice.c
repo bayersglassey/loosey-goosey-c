@@ -1,15 +1,29 @@
 // From examples/listobject.pp.c
 
-#define __extension__
 #define __assert_fail(...)
 
 typedef void
     PyListObject,
     PyTupleObject,
     Py_ssize_t,
-    PyObject,
-    size_t
+    PyObject
 ;
+
+static inline int
+PyType_HasFeature(PyTypeObject *type, unsigned long feature)
+{
+    unsigned long flags;
+    flags = type->tp_flags;
+    return ((flags & feature) != 0);
+}
+
+static inline int PyType_Check(PyObject *op) {
+    return PyType_HasFeature((Py_TYPE(((PyObject*)((op))))), ((1UL << 31)));
+}
+
+static inline int PyType_CheckExact(PyObject *op) {
+    return Py_IS_TYPE(((PyObject*)((op))), (&PyType_Type));
+}
 
 static int
 list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)

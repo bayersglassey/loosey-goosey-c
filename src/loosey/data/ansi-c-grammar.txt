@@ -324,8 +324,13 @@ statement_list
     | statement ( statement )*
     ;
 
+empty_expression_statement
+    | ';'
+    ;
+
 expression_statement
-    | ( expression )? ';'
+    | empty_expression_statement
+    | expression ';'
     ;
 
 else_statement

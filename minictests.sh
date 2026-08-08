@@ -61,7 +61,7 @@ elif test "$mode" = loosey; then
     if test "$testtype" = pp; then
         prog() ( python -m loosey.pp --local-dir pptests -f "$1" )
     elif test "$testtype" = cc; then
-        prog() ( python -m loosey.mini --local-dir minictests -f "$1" )
+        prog() ( python -m loosey.mini --local-dir minictests -f "$1" -- hello world )
     else
         die "Unrecognized test type: $testtype"
     fi
