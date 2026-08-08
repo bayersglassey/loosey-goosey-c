@@ -304,9 +304,24 @@ class Pointer:
          ...
         loosey.mini.SegmentationFault: Index 3 >= 3
 
+        You can initialize a Pointer with a value, instead of a MemoryBlock,
+        in which case it creates a MemoryBlock of fixed size 1 to store the
+        value.
+        >>> ptr = Pointer('hello world')
+        >>> ptr
+        Pointer('hello world')
+        >>> ptr.contents
+        'hello world'
+        >>> ptr + 1
+        Pointer(-1..-1, fixed=True)
+        >>> (ptr + 1)[-1]
+        'hello world'
+
     """
 
-    def __init__(self, mem: MemoryBlock, index: int = 0):
+    def __init__(self, mem: MemoryBlock | Value, index: int = 0):
+        if not isinstance(mem, MemoryBlock):
+            mem = MemoryBlock(mem, size=1)
         self.__dict__['mem'] = mem
         self.__dict__['index'] = index
 
@@ -327,6 +342,8 @@ class Pointer:
         return self.mem.freed
 
     def __repr__(self) -> str:
+        if self.mem.size == 1 and self.index == 0:
+            return f'{self.__class__.__name__}({self.contents!r})'
         msg = f'{self.min_index}..{self.max_index}'
         if self.mem.size is not None:
             msg += ', fixed=True'
@@ -358,14 +375,6 @@ class Pointer:
 
     def __sub__(self, index: int) -> 'Pointer':
         return Pointer(self.mem, self.index - index)
-
-    def __iadd__(self, index: int) -> 'Pointer':
-        self.__dict__['index'] += index
-        return self
-
-    def __isub__(self, index: int) -> 'Pointer':
-        self.__dict__['index'] -= index
-        return self
 
     def __setitem__(self, index: int, value: Value):
         self.mem[self.index + index] = value
@@ -556,7 +565,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         def _add_func(func, name=None):
             func_obj = PythonFunction(func, name)
-            self.global_scope[func_obj.name] = Pointer(MemoryBlock(func_obj, size=1))
+            self.global_scope[func_obj.name] = Pointer(func_obj)
 
         # This function can be used e.g. in parts of the stdlib which we
         # haven't implemented yet, to raise a Python exception
@@ -679,7 +688,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         if name in scope:
             scope[name].contents = value
         else:
-            scope[name] = Pointer(MemoryBlock(value, size=1))
+            scope[name] = Pointer(value)
 
     def runtime_error(self, msg: str):
         # NOTE: this function is available to C code as __loosey_error__
@@ -933,7 +942,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             elif len(param_values) > len(func.params):
                 self.warn(f"Calling {func} with {len(param_values)} parameters, extras will be ignored")
             for param_name, param_value in zip(func.params, param_values):
-                scope[param_name] = Pointer(MemoryBlock(param_value, size=1))
+                scope[param_name] = Pointer(param_value)
             try:
                 self.on(func.body)
             except Return as ret:
