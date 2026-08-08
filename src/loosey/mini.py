@@ -552,13 +552,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         >>> f = mini.eval('void f() { typedef int Integer; Integer *x; }')
         >>> for child in f.body.children: child.pprint()
         declaration_list
-          declaration
+          decl: declaration
             declspec: declaration_specifiers
               typedef
               int
             decl: init_declarator
               declare: Integer
-          declaration
+          decl: declaration
             declspec: declaration_specifiers
               Integer
             decl: init_declarator
@@ -576,7 +576,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         >>> mini.eval('typedef struct t T;')
         {'T': TypeDef('T')}
         >>> mini.parse('T *x;').pprint()
-        declaration
+        decl: declaration
           declspec: declaration_specifiers
             T
           decl: init_declarator
@@ -675,9 +675,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.pattern_callbacks = {
             ('compound_statement', 'block'):
                 (self.enter_typedef_block, self.exit_typedef_block),
-            ('declaration', None):
+            ('declaration', 'decl'):
                 (None, self.exit_declaration),
         }
+        for rule_name, pattern_name in self.pattern_callbacks:
+            if rule_name not in self.grammar_rules:
+                raise Exception(f"Unknown rule name: {rule_name}")
         self.toktype_predicates = {
             'TYPE_NAME': self.is_type_name_token,
         }
@@ -877,7 +880,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             intialized_values.update(self.on(child))
         return intialized_values
 
-    def on_declaration(self, match: ParseMatch) -> dict[str, Value]:
+    def on_decl__declaration(self, match: ParseMatch) -> dict[str, Value]:
         intialized_values = {}
 
         declaration = self.parse_declaration(match)
@@ -1309,6 +1312,12 @@ def main():
     parser.add_argument('--partial', default=False, action='store_true')
     parser.add_argument('main_args', nargs='*') # NOTE: takes everything after '--'
     args = parser.parse_args()
+
+    if args.main_args and '--' not in sys.argv:
+        print(f"ERROR: got extra arguments: {args.main_args}")
+        print("If this was intentional, put an explicit '--' before them.")
+        print("Or if they were a filename, put a '-f' in front of them.")
+        sys.exit(1)
 
     pp_kwargs = dict(
         local_dir=get_local_dir_from_args(args),

@@ -171,8 +171,10 @@ declaration_specifiers
     ;
 
 declaration
-    | declaration_specifiers ';'
-    | declaration_specifiers init_declarator_list ';'
+    # NOTE: patterns explicitly named so we can track when we exit a
+    # declaration during parsing, and make note of any typedefs...
+    | decl: declaration_specifiers ';'
+    | decl: declaration_specifiers init_declarator_list ';'
     ;
 
 struct_or_union_or_enum_tag
