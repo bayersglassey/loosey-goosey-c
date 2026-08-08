@@ -151,12 +151,12 @@ add(x, y)
 4
 
 # Creating a pointer in C code and returning it to Python:
->>> mkptr = mini.eval('''
+>>> mkptr = mini.eval("""
 ... void *mkptr() {
 ...     void *ptr = malloc(1);
 ...     ptr->x = 3;
 ...     return ptr;
-... }''')
+... }""")
 >>> ptr = mkptr()
 >>> ptr.contents.x
 3
