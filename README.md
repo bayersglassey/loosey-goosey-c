@@ -99,6 +99,7 @@ The interpreter's code lives here:
 
 Example usage (from Python REPL):
 ```python
+
 >>> from loosey.mini import MiniC, Pointer
 >>> mini = MiniC()
 
@@ -128,7 +129,7 @@ add(x, y)
 
 # Using a Python function from within mini-C:
 >>> import math
->>> mini.globals['sqrt'] = math.sqrt
+>>> mini.add_python_func(math.sqrt)
 >>> mini.eval('sqrt(20 + 5)')
 5.0
 
@@ -148,25 +149,27 @@ add(x, y)
 >>> ptr
 Pointer(4)
 
-# Creating a data structure in C code and returning it to Python:
->>> mkptr = mini.eval("""
-... void *mkptr() {
+# Dynamically allocating a data structure in C code and returning
+# it to Python:
+>>> mkobj = mini.eval("""
+... void *mkobj() {
 ...     void *ptr = malloc(1);
 ...     ptr->x = 3;
 ...     ptr->y = 4;
 ...     return ptr;
 ... }""")
->>> obj = mkptr().contents
->>> obj.x
-3
->>> obj.y
-4
+>>> mkobj()
+Pointer(Struct(x=3, y=4))
 
 # Allocating an array of data structures in Python and passing them to C code:
 >>> ptr = mini.malloc(3)
 >>> for i in range(3):
-...     ptr[i].x = i * 2
-...     ptr[i].y = i * 5
+...     ptr[i]['x'] = i * 2
+...     ptr[i]['y'] = i * 5
+...     ptr[i]
+Struct(x=0, y=0)
+Struct(x=2, y=5)
+Struct(x=4, y=10)
 >>> mini.eval(r"""f(struct t *objs) {
 ...     int i;
 ...     for (i = 0; i < 3; i += 1) printf("%i, %i\n", objs[i].x, objs[i].y);
@@ -174,10 +177,12 @@ Pointer(4)
 0, 0
 2, 5
 4, 10
+
 ```
 
 Example usage (from commandline):
 ```bash
+
 $ cat hello.c
 #include <stdio.h>
 int main(int argc, char **argv) {
@@ -188,4 +193,5 @@ int main(int argc, char **argv) {
 
 $ python -m loosey.mini -f hello.c -- world
 Hello, world!
+
 ```
