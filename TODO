@@ -145,6 +145,34 @@
             check for Struct instances, and use value.fields[attr] on them,
             instead of getattr.
 
+    [X] Support goto... but how?! We can find labels within functions,
+        but how are we going to like... reproduce the Python callstack
+        which is usually in place?!..
+        E.g. in the following, if we `goto some_label`, we should then
+        find ourselves inside a while loop. O_o
+
+            while (1) {
+                some_label: y = 4;
+            }
+
+        Or even here,
+
+            {
+                x = 1;
+                some_label: y = 2;
+                z = 3;
+            }
+
+        ...the 3 assignments are 3 ParseMatch children of the {...}.
+        So how do we jump into the middle of the Python handler for that
+        {...} (i.e. on_block__compound_statement)?..
+
+        See also: minictests/goto.c
+
+        [X] We could probably cheat at just support goto to labels within
+            a function body's top-level {...}, since that's the major use
+            case you absolutely must support (for proper C error handling).
+
     [ ] Handle postfix increment/decrement correctly?!..
         Omg. How is the semantics even defined, and can we do that within our
         current "ParseMatch visiting" approach?..
@@ -169,6 +197,9 @@
         partial parse", like assume that was going to be what it was supposed
         to be...
         Added GrammarParser.get_parse_error, but it's not amazing...
+
+        [ ] I think what we mostly need is to keep a stack of matches so far,
+            so we can reconstruct what we recently parsed...
 
         [ ] I think one thing we can do is less backtracking?.. so like, if
             we're parsing `int x` and we don't yet know whether it's gonna
@@ -204,11 +235,17 @@
 
             Freaking K&R C, man!..
 
-    [ ] Support conversion to/from bytes
-        See: MiniC.on_cast__cast_expression
+    [ ] Support conversion to/from bytes.
+        Use bytearray!
+        See also: MiniC.on_cast__cast_expression
 
-    [ ] Support strings... my_string[...] should find a NUL byte at the end
-        of Python str/bytes objects...
+        [ ] Support strings... my_string[...] should find a NUL byte at the end
+            of Python str/bytes objects...
+
+            Probably string literals should be turned into Python bytes, not str?..
+            And printf etc should write bytes, or ASCII?..
+            I think writing bytes can't be done in a cross-platform way, because
+            on Windows you can't re-open stdout, or something...
 
     [ ] Figure out how to implement libraries in Python, e.g. stdio.h,
         stdlib.h, etc.
@@ -219,11 +256,6 @@
         NOTE: we've got the .h files now, in src/loosey/data/include/,
         but we need a way to also specify whether the function definitions
         etc should be added to a given MiniC instance...
-
-    [ ] Probably string literals should be turned into Python bytes, not str?..
-        And printf etc should write bytes, or ASCII?..
-        I think writing bytes can't be done in a cross-platform way, because
-        on Windows you can't re-open stdout, or something...
 
     [ ] Support array/struct initializers {...}
         ...presumably requires parsing of struct declarations!
@@ -240,35 +272,11 @@
 
     [ ] Support variadic functions
 
-    [ ] Support goto... but how?! We can find labels within functions,
-        but how are we going to like... reproduce the Python callstack
-        which is usually in place?!..
-        E.g. in the following, if we `goto some_label`, we should then
-        find ourselves inside a while loop. O_o
-
-            while (1) {
-                some_label: y = 4;
-            }
-
-        Or even here,
-
-            {
-                x = 1;
-                some_label: y = 2;
-                z = 3;
-            }
-
-        ...the 3 assignments are 3 ParseMatch children of the {...}.
-        So how do we jump into the middle of the Python handler for that
-        {...} (i.e. on_block__compound_statement)?..
-
-        See also: minictests/goto.c
-
-        [ ] We could probably cheat at just support goto to labels within
-            a function body's top-level {...}, since that's the major use
-            case you absolutely must support (for proper C error handling).
-
 [ ] Add C99 support!.. where can we find a grammar for it?
+
+[ ] Look into making a bytecode... our current "dynamically evaluate the
+    parse tree" approach is fun, and got us off the ground, but it's
+    inefficient and can't really support the full power of goto (shudder).
 
 [ ] Add support for some GCC extensions, like ({ ... }).
     And maybe __PRETTY_FUNCTION__.

@@ -126,12 +126,22 @@ class Function:
         return self.mini.call_func(self, *args)
 
     @cached_property
+    def label_statements(self) -> list[ParseMatch]:
+        assert self.body.rule_name == 'compound_statement'
+        # NOTE: we don't currently support "deep" labels, only labels at
+        # the top level of the function body.
+        statement_list = self.body.find('statement_list')
+        if statement_list is not None:
+            return statement_list.children
+        else:
+            return self.body.children
+
+    @cached_property
     def labels(self) -> dict[str, ParseMatch]:
-        labels = {}
-        for child in self.body.findall('.* labeled_statement'):
-            name = child.children[0].token.value
-            labels[name] = child.children[1]
-        return labels
+        return {
+            child.children[0].token.value: child
+            for child in self.label_statements
+            if child.rule_name == 'labeled_statement'}
 
 
 class PythonFunction:
@@ -159,13 +169,21 @@ class PythonFunction:
         return f"{self.name}({params_msg})"
 
 
-class Return(Exception):
-    def __init__(self, value: Value):
+class ControlFlow(Exception):
+    match: ParseMatch
+class Return(ControlFlow):
+    def __init__(self, match: ParseMatch, value: Value):
+        self.match = match
         self.value = value
-class Continue(Exception): pass
-class Break(Exception): pass
-class Goto(Exception):
-    def __init__(self, label_name: str):
+class Continue(ControlFlow):
+    def __init__(self, match: ParseMatch):
+        self.match = match
+class Break(ControlFlow):
+    def __init__(self, match: ParseMatch):
+        self.match = match
+class Goto(ControlFlow):
+    def __init__(self, match: ParseMatch, label_name: str):
+        self.match = match
         self.label_name = label_name
 
 
@@ -1042,16 +1060,30 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 self.warn(f"Calling {func} with {len(param_values)} parameters, extras will be ignored")
             for param_name, param_value in zip(func.params, param_values):
                 scope[param_name] = Pointer(param_value)
-            try:
-                self.on(func.body)
-            except Return as ret:
-                return copy_value(ret.value)
-            except Goto as goto:
-                label = func.labels.get(goto.label_name)
-                if label is None:
-                    raise Exception(f"Label {goto.label_name!r} not found in func: {func}")
-                # TODO: implement goto...
-                raise Exception(f"Goto not implemented yet, but label {goto.label_name!r} was found in func: {func}")
+
+            body = func.body.children
+            while True:
+                try:
+                    for child in body:
+                        self.on(child)
+                except Return as ret:
+                    return copy_value(ret.value)
+                except Goto as goto:
+                    label_match = func.labels.get(goto.label_name)
+                    if label_match is None:
+                        labels_msg = "from top-level labels: " + ' '.join(func.labels) if func.labels else "function has no top-level labels"
+                        raise Exception(f"Top-level label {goto.label_name!r} not found in func: {func} ({labels_msg})")
+                    label_index = func.label_statements.index(label_match)
+                    # Go around the loop again, starting from the labeled
+                    # child of the function body...
+                    # NOTE: we don't support "deep" gotos at the moment, only
+                    # gotos whose labels live at the top level of the function
+                    # body.
+                    body = func.label_statements[label_index:]
+                except ControlFlow as ex:
+                    raise ParseError(ex.match.token, "Uncaught control flow: {ex.__class__.__name__}")
+                else:
+                    break
 
     def on_literal__primary_expression(self, match: ParseMatch) -> Value:
         token = match.token
@@ -1086,7 +1118,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             value = self.on(match.children[0])
         else:
             value = None
-        raise Return(value)
+        raise Return(match, value)
 
     def on_ident__primary_expression(self, match: ParseMatch) -> Value:
         return self.get_var(match.token.value)
@@ -1095,13 +1127,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         return self.get_var_ref(match.token.value)
 
     def on_goto__jump_statement(self, match: ParseMatch):
-        raise Goto(label_name=match.children[0].token.value)
+        raise Goto(match, label_name=match.children[0].token.value)
 
     def on_continue__jump_statement(self, match: ParseMatch):
-        raise Continue()
+        raise Continue(match)
 
     def on_break__jump_statement(self, match: ParseMatch):
-        raise Break()
+        raise Break(match)
 
     def _on_binary_expression(self, match: ParseMatch) -> Value:
         children = iter(match.children)
