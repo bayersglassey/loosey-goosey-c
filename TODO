@@ -252,6 +252,10 @@
 
         See also: minictests/goto.c
 
+        [ ] We could probably cheat at just support goto to labels within
+            a function body's top-level {...}, since that's the major use
+            case you absolutely must support (for proper C error handling).
+
 [ ] Add C99 support!.. where can we find a grammar for it?
 
 [ ] Add support for some GCC extensions, like ({ ... }).
