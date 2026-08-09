@@ -142,7 +142,7 @@ storage_class_specifier
     ;
 
 type_specifier
-    | [ 'void' 'char' 'short' 'int' 'long' 'float' 'double' 'signed' 'unsigned' ]
+    | [ 'void' 'char' 'short' 'int' 'long' 'float' 'double' 'signed' 'unsigned' '_Bool' ]
     | struct_or_union_specifier
     | enum_specifier
     | TYPE_NAME
@@ -338,7 +338,14 @@ else_statement
     ;
 
 switch_body_statement
-    | case:     'case' constant_expression ':' statement
+    # NOTE: the statement after 'case' is optional, to allow for patterns
+    # like this:
+    #   case 1:
+    #   case 2: expression
+    # ...which isn't really correct, but we've tweaked the original ANSI
+    # grammar in order for our mini-C's "evaluate the grammar-tree directly"
+    # approach to work...
+    | case:     'case' constant_expression ':' ( statement )?
     | default:  'default' ':' statement
     | statement
     ;

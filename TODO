@@ -173,6 +173,14 @@
             a function body's top-level {...}, since that's the major use
             case you absolutely must support (for proper C error handling).
 
+    [ ] When declaring a variable as an array, make sure its initial value is
+        a pointer, not a fresh struct!..
+
+            #define STACK_SIZE 1024
+            int _stack[STACK_SIZE], *stack=_stack;
+
+        ...here, the value of _stack needs to be a pointer!
+
     [ ] Handle postfix increment/decrement correctly?!..
         Omg. How is the semantics even defined, and can we do that within our
         current "ParseMatch visiting" approach?..

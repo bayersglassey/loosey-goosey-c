@@ -226,6 +226,13 @@ class Struct:
             attr: Pointer(value)
             for attr, value in kwargs.items()}
 
+    def __iter__(self):
+        return iter(self.fields)
+
+    def items(self) -> Iterator[tuple[str, Value]]:
+        for attr, ptr in self.fields.items():
+            yield (attr, ptr.contents)
+
     def get_or_create_field(self, attr: str) -> 'Pointer':
         if attr in self.fields:
             return self.fields[attr]
@@ -268,6 +275,59 @@ class Struct:
     def __setitem__(self, attr: str, value: Value):
         ptr = self.get_or_create_field(attr)
         ptr.contents = value
+
+
+    ###########################################################################
+    # Struct arithmetic:
+    # Since we use a fresh Struct instance as the default value for
+    # uninitialized memory, we need to handle cases where the type of that
+    # memory was some kind of integer.
+    # So, Struct behaves like the number 0 under arithmetic operations.
+    # That is, the following C code should behave correctly:
+    #
+    #   int *mem = calloc(1, sizeof(int));
+    #   mem[0]++; // if mem[0] was a Struct, it will now be the number 1
+    #
+
+    def __add__(self, other: Value) -> Value:
+        return other
+    __rlshift__ = __add__
+    __rrshift__ = __add__
+    __radd__ = __add__
+    __rsub__ = __add__
+    __rxor__ = __add__
+    __xor__ = __add__
+    __ror__ = __add__
+    __or__ = __add__
+
+    def __sub__(self, other: Value) -> Value:
+        return -other
+
+    def __mul__(self, other: Value) -> Value:
+        return 0
+    __rmul__ = __mul__
+    __lshift__ = __mul__
+    __rshift__ = __mul__
+    __rand__ = __mul__
+    __and__ = __mul__
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, (int, float)):
+            return other == 0
+        elif isinstance(other, Struct):
+            return dict(self) == dict(other)
+        else:
+            return False
+
+    def __truediv__(self, other: Value) -> Value:
+        if other == 0:
+            raise ZeroDivisionError
+        return 0 / other
+    __mod__ = __truediv__
+
+    def __rtruediv__(self, other: Value) -> Value:
+        raise ZeroDivisionError
+    __rmod__ = __rtruediv__
 
 
 class MemoryBlock:
@@ -491,6 +551,8 @@ class Pointer:
     def __sub__(self, index: int) -> 'Pointer':
         return Pointer(self.mem, self.index - index)
 
+    __radd__ = __add__
+
     def __setitem__(self, index: int, value: Value):
         self.mem[self.index + index] = value
 
@@ -513,6 +575,89 @@ BINARY_EXPRESSION_OPS = {
     'logical_and_expression': '&&',
     'logical_or_expression': '||',
 }
+
+
+_CSTDLIB_REGISTRY: set[str] = set()
+def _cstdlib_register(func):
+    _CSTDLIB_REGISTRY.add(func.__name__)
+    return func
+
+class CStdlib:
+    """Python functions implementing (a subset of) the C stdlib for MiniC"""
+
+    def __init__(self, mini: 'MiniC'):
+        self.mini = mini
+
+        self.stdin = Struct()
+        self.stdout = Struct()
+        self.stderr = Struct()
+
+    @_cstdlib_register
+    def malloc(self, size: int = 1) -> Pointer:
+        return Pointer(MemoryBlock(size=size))
+
+    @_cstdlib_register
+    def calloc(self, nmemb: int = 1, size: int = 1) -> Pointer:
+        return self.malloc(nmemb * size)
+
+    @_cstdlib_register
+    def realloc(self, ptr: Optional[Pointer], size: int = 1) -> Pointer:
+        if ptr is None:
+            return self.malloc(size)
+        elif ptr.size >= size:
+            return ptr
+        else:
+            new_ptr = Pointer(MemoryBlock(size=size))
+            self.memcpy(new_ptr, ptr, ptr.size)
+            return new_ptr
+
+    @_cstdlib_register
+    def free(self, ptr: Optional[Pointer]):
+        if ptr is not None:
+            ptr.free()
+
+    @_cstdlib_register
+    def fprintf(self, file, fmt: str, *args):
+        r"""
+
+            >>> mini = MiniC()
+            >>> mini.stdlib.printf('Hello %s\n', 'world')
+            Hello world
+            >>> mini.stdlib.printf('%i + %i = %i', 1, 2, 3)
+            1 + 2 = 3
+            >>> mini.stdlib.printf('[%c]', 65)
+            [A]
+
+        """
+        # TODO: use a proper C format-string parser...
+        if file is self.stdout:
+            file = sys.stdout
+        elif file is self.stderr:
+            file = sys.stderr
+        else:
+            raise Exception("fprintf is currently only implemented for stdout and stderr!")
+        msg = str(fmt) % args
+        print(msg, file=file, end='')
+
+    @_cstdlib_register
+    def printf(self, fmt: str, *args):
+        self.fprintf(self.stdout, fmt, *args)
+
+    @_cstdlib_register
+    def fgetc(self, file) -> int:
+        if file is self.stdin:
+            c = sys.stdin.read(1)
+            return ord(c)
+        else:
+            raise Exception("fgetc is currently only implemented for stdin!")
+
+    @_cstdlib_register
+    def getc(self, file) -> int:
+        return self.fgetc(file)
+
+    @_cstdlib_register
+    def getchar(self) -> int:
+        return self.fgetc(self.stdin)
 
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
@@ -676,12 +821,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.add_python_func(self.runtime_error, '__loosey_error__')
 
         # Add some default stdlib functions
-        self.add_python_func(self.malloc)
-        self.add_python_func(self.calloc)
-        self.add_python_func(self.realloc)
-        self.add_python_func(self.free)
-        self.add_python_func(self.printf)
-        self.add_python_func(self.fprintf)
+        self.stdlib = CStdlib(self)
+        for name in _CSTDLIB_REGISTRY:
+            self.add_python_func(getattr(self.stdlib, name))
 
         # The rules for parsing C typedefs are awful, because they're not
         # purely based on the structure of the grammar, they're also based
@@ -818,46 +960,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def runtime_error(self, msg: str):
         # NOTE: this function is available to C code as __loosey_error__
         raise Exception(msg)
-
-    def malloc(self, size: int = 1) -> Pointer:
-        return Pointer(MemoryBlock(size=size))
-
-    def calloc(self, nmemb: int = 1, size: int = 1) -> Pointer:
-        return self.malloc(nmemb * size)
-
-    def realloc(self, ptr: Optional[Pointer], size: int = 1) -> Pointer:
-        if ptr is None:
-            return self.malloc(size)
-        elif ptr.size >= size:
-            return ptr
-        else:
-            new_ptr = Pointer(MemoryBlock(size=size))
-            self.memcpy(new_ptr, ptr, ptr.size)
-            return new_ptr
-
-    def free(self, ptr: Optional[Pointer]):
-        if ptr is not None:
-            ptr.free()
-
-    def printf(self, fmt: str, *args):
-        r"""
-
-            >>> mini = MiniC()
-            >>> mini.printf('Hello %s\n', 'world')
-            Hello world
-            >>> mini.printf('%i + %i = %i', 1, 2, 3)
-            1 + 2 = 3
-            >>> mini.printf('[%c]', 65)
-            [A]
-
-        """
-        # TODO: use a proper C format-string parser...
-        msg = str(fmt) % args
-        print(msg, end='')
-
-    def fprintf(self, file, fmt: str, *args):
-        self.printf(fmt, *args)
-
 
     ###########################################################################
     # GRAMMAR HANDLER METHODS
@@ -1135,6 +1237,33 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def on_break__jump_statement(self, match: ParseMatch):
         raise Break(match)
 
+    def on_inc__unary_expression(self, match: ParseMatch) -> Value:
+        ptr = self.get_reference(match.children[0])
+        value = ptr.contents + 1
+        ptr.contents = value
+        return value
+
+    def on_dec__unary_expression(self, match: ParseMatch) -> Value:
+        ptr = self.get_reference(match.children[0])
+        value = ptr.contents - 1
+        ptr.contents = value
+        return value
+
+    def on_conditional_expression(self, match: ParseMatch) -> Value:
+        cond = value_as_bool(self.on(match.children[0]))
+        if cond:
+            return self.on(match.children[1])
+        else:
+            return self.on(match.children[2])
+
+    def on_reference__conditional_expression(self, match: ParseMatch) -> Pointer:
+        with self.use_handler_prefix(None):
+            cond = value_as_bool(self.on(match.children[0]))
+        if cond:
+            return self.on(match.children[1])
+        else:
+            return self.on(match.children[2])
+
     def _on_binary_expression(self, match: ParseMatch) -> Value:
         children = iter(match.children)
         value = self.on(next(children))
@@ -1144,9 +1273,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             else:
                 op = child.token.value
                 child = next(children)
-            if op not in ('&&', '||'):
+            if op in ('&&', '||'):
                 # Short-circuiting logic!.. only evalute the argument if
                 # we need to, see below...
+                pass
+            else:
                 arg = self.on(child)
             if op == '+':
                 value += arg
@@ -1181,15 +1312,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             elif op == '|':
                 value |= arg
             elif op == '&&':
-                # Short-circuiting logic!
-                if not value:
-                    return False
-                return self.on(next(children))
+                # Short-circuiting logic: self.on(child) is only evaluated
+                # if needed
+                return value_as_bool(value) and value_as_bool(self.on(child))
             elif op == '||':
-                # Short-circuiting logic!
-                if value:
-                    return True
-                return self.on(next(children))
+                # Short-circuiting logic: self.on(child) is only evaluated
+                # if needed
+                return value_as_bool(value) or value_as_bool(self.on(child))
             else:
                 # We should never get here...
                 raise ParseError(token, f"Dunno binary op {op!r}")

@@ -162,7 +162,7 @@ Pointer(4)
 Pointer(Struct(x=3, y=4))
 
 # Allocating an array of data structures in Python and passing them to C code:
->>> ptr = mini.malloc(3)
+>>> ptr = mini.stdlib.malloc(3)
 >>> for i in range(3):
 ...     ptr[i]['x'] = i * 2
 ...     ptr[i]['y'] = i * 5
