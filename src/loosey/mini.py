@@ -52,49 +52,37 @@ def copy_value(value: Value) -> Value:
 
 
 class Declarator(NamedTuple):
-    """E.g. `x` or `*x` or `x = 1`, etc"""
-    name: str
+    """E.g. `x` or `*x[]` or `**(*x[3])[][4]`, etc."""
     match: ParseMatch
-    value_match: Optional[ParseMatch]
+    name: str
+    kind: Optional[str] # None or 'pointer' or 'array' or 'func'
 
 
-class Declaration:
+class InitDeclarator(NamedTuple):
+    declarator: Declarator
+    initializer: Optional[ParseMatch]
+
+    @property
+    def name(self) -> str:
+        return self.declarator.name
+
+
+class Declaration(NamedTuple):
     """E.g. `const int x, *y` or `typedef struct T T` or `int x = 1, y = 2`"""
+    match: ParseMatch
+    declspec: ParseMatch
+    specifiers: set[str] # 'typedef', 'extern', 'const', etc
+    init_declarators: list[InitDeclarator]
 
-    def __init__(self, match: ParseMatch):
-        assert match.rule_name == 'declaration'
-        self.match = match
-
-        # The declaration specifiers, e.g. 'int'
-        self.declspec = match.find('declaration_specifiers')
-
-        # Looking for specifiers like 'typedef', 'extern', 'const', etc
-        self.specifiers: set[str] = {child.token.value
-            for child in
-                self.declspec.findall('storage_class_specifier')
-                + self.declspec.findall('type_qualifier')}
-        self.is_typedef = 'typedef' in self.specifiers
-
-        self.declarators: list[Declarator] = []
-        for child in match.findall('init_declarator_list? init_declarator'):
-            declarator_match = child.children[0]
-            name = (declarator_match.find('.* declare:.') or declarator_match).token.value
-            value_match = child.find('assign:initializer .')
-            self.declarators.append(Declarator(
-                name=name,
-                value_match=value_match,
-                match=declarator_match,
-            ))
+    @property
+    def is_typedef(self) -> bool:
+        return 'typedef' in self.specifiers
 
 
 class TypeDef(NamedTuple):
     name: str
-
-    # E.g. 'typedef int'
-    declspec: ParseMatch
-
-    # E.g. 'x', '*x', etc
-    declarator: ParseMatch
+    declaration: Declaration
+    init_declarator: InitDeclarator
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({self.name!r})'
@@ -720,12 +708,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
               typedef
               int
             decl: init_declarator
-              declare: Integer
+              decl: declarator
+                declare: Integer
           decl: declaration
             declspec: declaration_specifiers
               Integer
             decl: init_declarator
-              declarator
+              decl: declarator
                 pointer: *
                 declare: x
 
@@ -743,7 +732,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
           declspec: declaration_specifiers
             T
           decl: init_declarator
-            declarator
+            decl: declarator
               pointer: *
               declare: x
 
@@ -845,6 +834,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             'TYPE_NAME': self.is_type_name_token,
         }
 
+        self.parsed_declarators: dict[str, Declarator] = {}
         self.parsed_declarations: dict[str, Declaration] = {}
 
     def parse(self, *args, **kwargs):
@@ -889,8 +879,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         if not declaration.is_typedef:
             return
         typedef_block = self.typedef_blocks[-1]
-        for declarator in declaration.declarators:
-            typedef_block.add(declarator.name)
+        for init_declarator in declaration.init_declarators:
+            typedef_block.add(init_declarator.name)
 
     def is_type_name_token(self, token: Token) -> bool:
         if token.toktype != 'IDENTIFIER':
@@ -949,13 +939,149 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             scope[name] = Pointer(value)
 
+    def parse_declarator(self, match: ParseMatch) -> Declarator:
+        key = match.unique_id
+        declarator = self.parsed_declarators.get(key)
+        if declarator is None:
+            declarator = self._parse_declarator(match)
+            self.parsed_declarators[key] = declarator
+        return declarator
+
+    def _parse_declarator(self, match: ParseMatch) -> Declarator:
+        """
+
+            >>> mini = MiniC()
+
+            >>> def test(text):
+            ...     match = mini.parse(text, 'declarator')
+            ...     decl = mini.parse_declarator(match)
+            ...     return decl.name, decl.kind
+
+            >>> test('x')
+            ('x', None)
+
+            >>> test('(x)')
+            ('x', None)
+
+            >>> test('*x')
+            ('x', 'pointer')
+
+            >>> test('*(x)')
+            ('x', 'pointer')
+
+            >>> test('(*x)')
+            ('x', 'pointer')
+
+            >>> test('x[]')
+            ('x', 'array')
+
+            >>> test('(x)[]')
+            ('x', 'array')
+
+            >>> test('(x[])')
+            ('x', 'array')
+
+            >>> test('x()')
+            ('x', 'func')
+
+            >>> test('(x)()')
+            ('x', 'func')
+
+            >>> test('(x())')
+            ('x', 'func')
+
+        The most obnoxious distinction in C's entire type system: function
+        pointer vs function returning pointer:
+
+            >>> test('(*x)()')
+            ('x', 'pointer')
+
+            >>> test('*x()')
+            ('x', 'func')
+
+            >>> test('*(x)()')
+            ('x', 'func')
+
+        Another tricky distinction: array of pointers vs pointer to array:
+
+            >>> test('*x[]')
+            ('x', 'array')
+
+            >>> test('(*x)[]')
+            ('x', 'pointer')
+
+        """
+        assert match.rule_name == 'declarator'
+
+        # Find the stuff within the innermost set of parentheses...
+        # 1. `*(*(**x[3])[])()` -> `**x[3]`
+        # 2. `*(*(x)[])()` -> `*(x)[]`
+        #    ...note how we don't count the parentheses around `(x)`, since
+        #    they don't affect the type of x!.. e.g. `*((x))` is a pointer.
+        child = innermost_match = match
+        while True:
+            if len(child.children) > 1:
+                innermost_match = child
+            next_child = child.find('declarator')
+            if next_child is None:
+                name = child.find('declare:.').token.value
+                break
+            child = next_child
+
+        suffix = innermost_match.find('declarator_suffix')
+        if suffix:
+            if suffix.pattern_name == 'array':
+                kind = 'array'
+            elif suffix.pattern_name == 'params':
+                kind = 'func'
+            else:
+                # Should never happen
+                raise ParseError(match.token, f"Unknown suffix: {suffix}")
+        elif innermost_match.find('pointer'):
+            kind = 'pointer'
+        else:
+            kind = None
+
+        return Declarator(
+            match=match,
+            name=name,
+            kind=kind,
+        )
+
     def parse_declaration(self, match: ParseMatch) -> Declaration:
         key = match.unique_id
         declaration = self.parsed_declarations.get(key)
         if declaration is None:
-            declaration = Declaration(match)
+            declaration = self._parse_declaration(match)
             self.parsed_declarations[key] = declaration
         return declaration
+
+    def _parse_declaration(self, match: ParseMatch) -> Declaration:
+        assert match.rule_name == 'declaration'
+
+        # The declaration specifiers, e.g. 'int'
+        declspec = match.children[0]
+
+        # Looking for specifiers like 'typedef', 'extern', 'const', etc
+        specifiers: set[str] = {child.token.value
+            for child in
+                declspec.findall('storage_class_specifier')
+                + declspec.findall('type_qualifier')}
+
+        # Init declarators, e.g. `x`, `*x[3]`, `x = 2`, etc
+        init_declarators: list[InitDeclarator] = []
+        for child in match.children[1:]:
+            assert child.rule_name == 'init_declarator'
+            declarator = self.parse_declarator(child.children[0])
+            initializer = child.children[1] if len(child.children) > 1 else None
+            init_declarators.append(InitDeclarator(declarator, initializer))
+
+        return Declaration(
+            match=match,
+            declspec=declspec,
+            specifiers=specifiers,
+            init_declarators=init_declarators,
+        )
 
     def runtime_error(self, msg: str):
         # NOTE: this function is available to C code as __loosey_error__
@@ -1006,21 +1132,22 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         declaration = self.parse_declaration(match)
         if declaration.is_typedef:
             # Handle typedefs
-            for declarator in declaration.declarators:
-                name = declarator.name
+            for init_declarator in declaration.init_declarators:
+                name = init_declarator.name
                 value = TypeDef(
                     name=name,
-                    declspec=declaration.declspec,
-                    declarator=declarator.match,
+                    declaration=declaration,
+                    init_declarator=init_declarator,
                 )
                 self.set_var(name, value)
                 intialized_values[name] = value
         else:
             # Handle variable initializations
-            for declarator in declaration.declarators:
-                name = declarator.name
-                if declarator.value_match:
-                    value = copy_value(self.on(declarator.value_match))
+            for init_declarator in declaration.init_declarators:
+                name = init_declarator.name
+                initializer = init_declarator.initializer
+                if initializer is not None:
+                    value = copy_value(self.on(initializer))
                     self.set_var(name, value)
                 else:
                     scope = self.scopes[-1]
