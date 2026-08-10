@@ -179,13 +179,15 @@
             a function body's top-level {...}, since that's the major use
             case you absolutely must support (for proper C error handling).
 
-    [ ] When declaring a variable as an array, make sure its initial value is
+    [X] When declaring a variable as an array, make sure its initial value is
         a pointer, not a fresh struct!..
 
             #define STACK_SIZE 1024
             int _stack[STACK_SIZE], *stack=_stack;
 
         ...here, the value of _stack needs to be a pointer!
+
+    [X] Support array initializers, `int x[] = {1, 2};` etc
 
     [ ] Handle arbitrary FILE*, fopen, fclose, etc.
 
@@ -276,8 +278,6 @@
         NOTE: we've got the .h files now, in src/loosey/data/include/,
         but we need a way to also specify whether the function definitions
         etc should be added to a given MiniC instance...
-
-    [X] Support array initializers, `int x[] = {1, 2};` etc
 
     [ ] Support struct initializers, `T t = {1, 2};` etc
         ...presumably requires parsing of struct declarations!
