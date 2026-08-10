@@ -3,8 +3,6 @@ set -euo pipefail
 
 venv/bin/pytest
 
-python -m doctest README.md
-
 # Run preprocessor tests using GCC and loosey
 ./pptests.sh -m gcc
 ./pptests.sh -m loosey
@@ -12,3 +10,7 @@ python -m doctest README.md
 # Run mini-C tests using GCC and loosey
 ./minictests.sh -m gcc
 ./minictests.sh -m loosey
+
+# Run doctests on various public-facing documentation files
+python -m doctest README.md
+python -m doctest examples/reverse_slice.c

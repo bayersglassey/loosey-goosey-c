@@ -236,6 +236,11 @@ class Goto(ControlFlow):
         self.match = match
         self.label_name = label_name
 
+class Exit(Exception):
+    """Raised by CStdlib's exit()"""
+    def __init__(self, code: int):
+        self.code = code
+
 
 class SegmentationFault(IndexError): pass
 
@@ -594,6 +599,10 @@ class Pointer:
     def __repr__(self) -> str:
         return self.mkrepr()
 
+    def as_list(self) -> list[Value]:
+        # Particularly useful for doctests!..
+        return [self[i] for i in range(self.min_index, self.max_index + 1)]
+
     @property
     def contents(self) -> Value:
         return self[0]
@@ -716,6 +725,10 @@ class CStdlib:
             return value
         else:
             raise Exception(f"Expected file-like object or file handle, got: {value!r}")
+
+    @_cstdlib_register()
+    def exit(self, code: int):
+        raise Exit(code)
 
     @_cstdlib_register()
     def __loosey_errno__(self) -> int:
@@ -1041,6 +1054,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         Continue,
         Break,
         Goto,
+        Exit,
     )
     handler_prefixes = ('reference',)
 
@@ -1062,10 +1076,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.global_scope: dict[str, Pointer] = {}
         self.scopes: list[dict[str, Pointer]] = [self.global_scope]
 
-        # This function can be used e.g. in parts of the stdlib which we
-        # haven't implemented yet, to raise a Python exception
+        # Add some helper functions
         self.add_python_func(self.runtime_error, '__loosey_error__')
         self.add_python_func(self.trace, '__loosey_trace__')
+        self.add_python_func(print)
 
         # Add some default stdlib functions
         self.stdlib = CStdlib(self)

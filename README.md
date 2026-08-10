@@ -37,6 +37,7 @@ it succeed this time.
 Last thing in this rationale, I'm going to breathe to you a secret word...
 [doctests](https://docs.python.org/3/library/doctest.html).
 Imagine doctests for your C code.
+See also the "doctests for C" section below...
 
 
 ## Existing C interpreters
@@ -212,3 +213,15 @@ Stack: 3 10
 Stack: 30
 > q
 ```
+
+
+## Doctests for C
+
+Hey, look, I made a doctest for a C function I found in the CPython source...
+* [reverse_slice.c](/examples/reverse_slice.c)
+
+In this case, I had to copy-paste the function out of the C file I found it in
+(CPython's Objects/listobject.c), because MiniC wasn't able to parse that file
+as-is.
+Going forward, I'd like to increasingly be able to just point MiniC at existing
+files, and extract functions from them directly...
