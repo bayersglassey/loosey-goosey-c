@@ -30,12 +30,16 @@ postfix_operator
     | call:  '(' ( assignment_expression ( ',' assignment_expression )* )? ')'
     | dot:   '.' field_name
     | arrow: '->' field_name
-    | inc:   '++'
-    | dec:   '--'
     ;
 
 postfix_expression
     | primary_expression ( postfix_operator )*
+    ;
+
+postfix_increment_expression
+    | inc: postfix_expression '++'
+    | dec: postfix_expression '--'
+    | postfix_expression
     ;
 
 unary_operator
@@ -48,7 +52,7 @@ unary_expression
     | inc: '++' unary_expression
     | dec: '--' unary_expression
     | unary_operator cast_expression
-    | postfix_expression
+    | postfix_increment_expression
     ;
 
 cast_expression

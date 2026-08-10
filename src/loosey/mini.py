@@ -719,6 +719,11 @@ class CStdlib:
         self.fputs(s, self.stdout)
         sys.stdout.write('\n')
 
+    @_cstdlib_register
+    def fflush(self, file):
+        file = self._get_file(file)
+        file.flush()
+
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
     r"""Miniature C interpreter, which can use many Python objects and
@@ -880,6 +885,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # This function can be used e.g. in parts of the stdlib which we
         # haven't implemented yet, to raise a Python exception
         self.add_python_func(self.runtime_error, '__loosey_error__')
+        self.add_python_func(self.trace, '__loosey_trace__')
 
         # Add some default stdlib functions
         self.stdlib = CStdlib(self)
@@ -1165,6 +1171,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # NOTE: this function is available to C code as __loosey_error__
         raise Exception(msg)
 
+    def trace(self):
+        # NOTE: this function is available to C code as __loosey_trace__
+        import ipdb
+        ipdb.set_trace()
+
     ###########################################################################
     # GRAMMAR HANDLER METHODS
 
@@ -1344,11 +1355,20 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             else:
                 return getattr(value, attr)
         else:
-            # TODO: implement postfix increment/decrement!..
-            # Aren't those kind of crazy, though?!.. they require, like...
-            # postponing the increment/decrement until the end of the
-            # statement, or something?..
+            # Should never happen!
             raise ParseError(match.token, f"Dunno postfix operator: {match.prettystring()}")
+
+    def on_inc__postfix_increment_expression(self, match: ParseMatch) -> Value:
+        ptr = self.get_reference(match.children[0])
+        value = ptr.contents
+        ptr.contents += 1
+        return value # the un-incremented value
+
+    def on_dec__postfix_increment_expression(self, match: ParseMatch) -> Value:
+        ptr = self.get_reference(match.children[0])
+        value = ptr.contents
+        ptr.contents -= 1
+        return value # the un-decremented value
 
     def _postfix_reference_operator(self, value: Value, match: ParseMatch) -> Pointer:
         assert match.rule_name == 'postfix_operator'

@@ -51,5 +51,16 @@ int main() {
     COMPARE_EQ(& x, & y)
     COMPARE_EQ(& f, & f)
     COMPARE_EQ(& f, & g)
+    {
+        int x = 1;
+        printf("x = %i\n", x);
+        printf("x++ = %i\n", x++);
+        printf("x = %i\n", x);
+        printf("x-- = %i\n", x--);
+        printf("x = %i\n", x);
+        printf("++x = %i\n", ++x);
+        printf("x = %i\n", x);
+        printf("--x = %i\n", --x);
+    }
     return 0;
 }
