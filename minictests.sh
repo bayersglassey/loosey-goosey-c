@@ -54,7 +54,11 @@ if test "$mode" = gcc; then
     if test "$testtype" = pp; then
         prog() ( cpp -P -iquote pptests "$1" )
     elif test "$testtype" = cc; then
-        prog() ( gcc -iquote minictests "$1" && ./a.out )
+        prog() (
+            filename="$1"
+            shift
+            gcc -iquote minictests "$filename" && ./a.out "$@"
+        )
     else
         die "Unrecognized test type: $testtype"
     fi
@@ -62,7 +66,11 @@ elif test "$mode" = loosey; then
     if test "$testtype" = pp; then
         prog() ( python -m loosey.pp --local-dir pptests -f "$1" )
     elif test "$testtype" = cc; then
-        prog() ( python -m loosey.mini --local-dir minictests -f "$1" -- hello world )
+        prog() (
+            filename="$1"
+            shift
+            python -m loosey.mini --local-dir minictests -f "$filename" -- "$@"
+        )
     else
         die "Unrecognized test type: $testtype"
     fi
@@ -70,12 +78,50 @@ else
     die "Unrecognized mode: $mode"
 fi
 
-actual() {
-    prog "$1" || die "Non-zero exit code: $?"
-}
+actual() (
+    prog "$@" || die "Non-zero exit code: $?"
+)
 
-expected() {
-    cat "$1.out"
+n_tests=0
+given() {
+    : $(( n_tests++ ))
+    test_name="Shell test $n_tests"
+    echo "=== $test_name:"
+
+    if test "$1" = "args"; then
+        args="$2"
+        shift 2
+    else
+        args=
+    fi
+    if test "$1" = "input"; then
+        input="$2"
+        shift 2
+    else
+        input=
+    fi
+    if test "$1" = "expect"; then
+        expected="$2"
+        shift 2
+    else
+        expected=
+    fi
+
+    echo "--- Args: $args"
+    echo "--- Input:"
+    printf "%s\n" "$input"
+    if test "$just_output" = true; then
+        echo "--- Output:"
+        printf %s "$input" | actual "$file" $args
+    else
+        echo "--- Actual vs expected output:"
+        if diff $diffopts <(printf %s "$input" | actual "$file" $args | normalize) <(printf %s "$expected" | normalize); then
+            echo "$file: OK!"
+        else
+            echo "*** $file: FAIL"
+            exit 1
+        fi
+    fi
 }
 
 n_files=0
@@ -87,18 +133,23 @@ for file in $files; do
     echo "=== Input:"
     cat "$file"
 
-    if test "$just_output" = true; then
-        echo "=== Output:"
-        actual "$file"
-        continue
+    if test -f "$file.out"; then
+        if test "$just_output" = true; then
+            echo "=== Output:"
+            actual "$file"
+        else
+            echo "=== Actual vs expected output:"
+            if diff $diffopts "$@" <(actual "$file" | normalize) <(cat "$file.out" | normalize); then
+                echo "$file: OK!"
+            else
+                echo "*** $file: FAIL"
+                exit 1
+            fi
+        fi
     fi
 
-    echo "=== Actual vs expected output:"
-    if diff $diffopts "$@" <(actual "$file" | normalize) <(expected "$file" | normalize); then
-        echo "$file: OK!"
-    else
-        echo "*** $file: FAIL"
-        exit 1
+    if test -f "$file.sh"; then
+        . "$file.sh"
     fi
 done
 
