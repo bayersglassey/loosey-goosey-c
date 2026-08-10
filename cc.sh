@@ -22,5 +22,6 @@ int main(int argc, char **argv) {
 echo "$fullcode" | gcc -x c "$@" - || {
     echo "Code was:"
     echo "$fullcode"
+    exit 1
 }
 ./a.out
