@@ -203,6 +203,10 @@
 
     [X] Handle arbitrary FILE*, fopen, fclose, etc.
 
+    [ ] Better run-time error messages!..
+        But see also the TODO about better parsing error messages, which might
+        be good to do first...
+
     [ ] Implement string.h (especially memset, memcpy, etc)
         ...but probably we need to figure out how we're doing strings first,
         see the relevant TODO... like we should probably use bytes everywhere,
