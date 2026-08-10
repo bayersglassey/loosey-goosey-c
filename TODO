@@ -189,15 +189,23 @@
 
     [X] Support array initializers, `int x[] = {1, 2};` etc
 
+    [X] Handle postfix increment/decrement correctly?!..
+        Omg. How is the semantics even defined, and can we do that within our
+        current "ParseMatch visiting" approach?..
+
+        See:
+        * https://en.cppreference.com/c/language/eval_order
+        * https://en.wikipedia.org/wiki/Sequence_point
+        * https://en.cppreference.com/cpp/language/operator_incdec
+
+        ...ah, it wasn't so bad. Actually a lot of stuff is undefined, and
+        all we need to do is the obvious thing.
+
     [ ] Handle arbitrary FILE*, fopen, fclose, etc.
 
     [ ] Add a Token to structs and memory blocks, for debugging purposes.
         Also, replace e.g. Struct(x=1, y=2) with Struct({'x': 1, 'y': 2})
         ...and then we can have Struct({...}, token=...)
-
-    [ ] Handle postfix increment/decrement correctly?!..
-        Omg. How is the semantics even defined, and can we do that within our
-        current "ParseMatch visiting" approach?..
 
     [ ] Support multiple call stacks!.. just in case we ever want to have
         threads etc.
@@ -294,6 +302,7 @@
             malloc+memset, we can use it like an array of numbers
 
     [ ] Support variadic functions
+        See: https://en.cppreference.com/c/variadic/va_arg
 
     [ ] Support enums
 
@@ -316,7 +325,7 @@
         the construct has type void, and thus effectively no value.)"
 
 [ ] Look at Yacc's implementation (or any papers on it), see what their
-approach is... backtracking?..
+    approach is... backtracking?..
 
 [ ] Can g++ be convinced to output C?.. i.e. can we use it in the same
     way that C++ was originally a fancy C preprocessor?
