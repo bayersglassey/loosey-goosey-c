@@ -1557,7 +1557,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         assert match.rule_name == 'postfix_operator'
         if match.pattern_name == 'index':
             # e.g. &(x[3]), i.e. &(*(x + 3)), i.e. x + 3
-            index = self.on(match.children[1])
+            index = self.on(match.children[0])
             return value + index
         elif match.pattern_name in ('dot', 'arrow'):
             attr = match.children[0].token.value

@@ -55,7 +55,7 @@ int main() {
             case '+': push(pop() + pop()); break;
             case '-': push(pop() - pop()); break;
             case '*': push(pop() * pop()); break;
-            case 'n': *stack = -*stack; break;
+            case 'n': stack[-1] = -stack[-1]; break;
             case 'd': /* drop */ pop(); break;
             case 'c': /* clear */ stack = _stack; break;
             case 'q': return 0;

@@ -182,7 +182,6 @@ Struct(x=4, y=10)
 
 Example usage (from commandline):
 ```bash
-
 $ cat hello.c
 #include <stdio.h>
 int main(int argc, char **argv) {
@@ -193,5 +192,16 @@ int main(int argc, char **argv) {
 
 $ python -m loosey.mini -f hello.c -- world
 Hello, world!
+```
 
+As an example of a somewhat interesting C program which mini-C can actually run,
+see e.g. [calc.c](/minictests/calc.c), which is a tiny stack-based calculator:
+```bash
+$ python -m loosey.mini -f minictests/calc.c
+$ python -m loosey.mini -f minictests/calc.c
+> 1 2 + 10
+Stack: 3 10
+> *
+Stack: 30
+> q
 ```
