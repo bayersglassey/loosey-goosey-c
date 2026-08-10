@@ -31,6 +31,9 @@ def value_as_bool(value: Value) -> bool:
         return False
     elif isinstance(value, (int, float)):
         return bool(value)
+    elif isinstance(value, Struct):
+        # Struct behaves like 0 under arithmetic operations...
+        return False
     else:
         # E.g. Python strings should be interpreted as `const char *`,
         # so always truthy, even the empty string!..
@@ -291,6 +294,12 @@ class Struct:
     #   mem[0]++; // if mem[0] was a Struct, it will now be the number 1
     #
 
+    def __pos__(self) -> Value:
+        return 0
+    __neg__ = __pos__
+    def __invert__(self) -> Value:
+        return ~0
+
     def __add__(self, other: Value) -> Value:
         return other
     __rlshift__ = __add__
@@ -313,14 +322,6 @@ class Struct:
     __rand__ = __mul__
     __and__ = __mul__
 
-    def __eq__(self, other) -> bool:
-        if isinstance(other, (int, float)):
-            return other == 0
-        elif isinstance(other, Struct):
-            return dict(self) == dict(other)
-        else:
-            return False
-
     def __truediv__(self, other: Value) -> Value:
         if other == 0:
             raise ZeroDivisionError
@@ -330,6 +331,23 @@ class Struct:
     def __rtruediv__(self, other: Value) -> Value:
         raise ZeroDivisionError
     __rmod__ = __rtruediv__
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, (int, float)):
+            return other == 0
+        elif isinstance(other, Struct):
+            return dict(self) == dict(other)
+        else:
+            return False
+
+    def __lt__(self, other: Value) -> bool:
+        return 0 < other
+    def __le__(self, other: Value) -> bool:
+        return 0 <= other
+    def __gt__(self, other: Value) -> bool:
+        return 0 > other
+    def __ge__(self, other: Value) -> bool:
+        return 0 >= other
 
 
 class MemoryBlock:
@@ -1205,9 +1223,16 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             # Handle variable initializations
             for init_declarator in declaration.init_declarators:
                 name = init_declarator.name
+                kind = init_declarator.kind
                 initializer = init_declarator.initializer
                 if initializer is not None:
-                    value = copy_value(self.on(initializer))
+                    if initializer.spec == 'initializer_list:initializer' and kind != 'array':
+                        # TODO: implement struct initialization lists...
+                        # HACK: for now, we just make sure `= {0}` works
+                        value = self._create_uninitialized_value(
+                            name, init_declarator.declarator)
+                    else:
+                        value = copy_value(self.on(initializer))
                     self.set_var(name, value)
                 else:
                     scope = self.scopes[-1]
@@ -1285,7 +1310,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         elif op == '~':
             return ~value
         elif op == '!':
-            return not value
+            return not value_as_bool(value)
         elif op == '*':
             return self.dereference(value)
         else:

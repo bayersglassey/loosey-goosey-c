@@ -1215,7 +1215,23 @@ class Preprocessor:
             assert self.expanding_macros.pop() == macro.name
 
     @debug_recursion()
+    def _stringize(self, token: Token, tokens: FancyIterator[Token]) -> Token:
+        next_token = next(tokens, None)
+        if next_token is None:
+            raise ParseError(token, "Missing token after '#'")
+        ident = next_token.identifier()
+        if ident is None or ident not in self.bound_macro_params:
+            raise ParseError(token, "Expected macro parameter after '#', got: {next_token.prettystring()}")
+        param_tokens = self.bound_macro_params[ident]
+        msg = ' '.join(token.value for token in param_tokens)
+        return Token.from_parents((token, next_token), 'STRING',
+            to_string_literal(msg))
+
+    @debug_recursion()
     def _expand_token(self, token: Token, tokens: FancyIterator[Token]) -> Iterator[Token]:
+        if token.value == '#':
+            yield self._stringize(token, tokens)
+            return
         ident = token.identifier()
         if ident == '__FILE__':
             yield Token.from_parents((token,), 'STRING',

@@ -63,11 +63,16 @@
 
     [X] Handle `#if defined`
 
-    [ ] Handle # (stringization) and ## (pasting) operators
+    [X] Handle # (stringization) operator
         ...and then un-skip minictests/ops.c.SKIP
+
+    [ ] Handle ## (pasting) operator
 
     [ ] Fix our handling of includes!..
         See: notes/includes.txt
+
+    [ ] Keep track of whether tokens had whitespace between them...
+        E.g. given `#define M(X) #X`, `M(&x)` should be `"&x"`, not `"& x"`.
 
     [ ] SUPPORT BACKSLASH-NEWLINE IN THE MIDDLE OF A TOKEN?!?!?!
         We could probably do it. It's dumb, but then we could maybe use
