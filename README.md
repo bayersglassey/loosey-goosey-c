@@ -97,6 +97,14 @@ probably a [packrat parser](https://en.wikipedia.org/wiki/Packrat_parser):
 The interpreter's code lives here:
 * [mini.py](/src/loosey/mini.py)
 
+There are fairly extensive tests, see:
+* Doctests throughout the Python code
+* C tests in [minictests](/minictests), run with [minictests.sh](/minictests.sh)
+* Preprocessor tests in [pptests](/pptests), run with [pptests.sh](/pptests.sh)
+
+The "roadmap" is this big ol' checklist:
+* [TODO](/TODO)
+
 Example usage (from Python REPL):
 ```python
 
