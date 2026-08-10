@@ -1,7 +1,7 @@
 #include <stdio.h>
 
 
-typedef struct T T;
+typedef struct T { int x; int z; } T;
 
 
 void modify_via_pointer(T *t, int i) {
