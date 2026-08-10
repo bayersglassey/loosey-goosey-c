@@ -51,6 +51,15 @@ def copy_value(value: Value) -> Value:
         return value
 
 
+def coerce_pointers_for_comparison(lhs: Value, rhs: Value) -> tuple[Value, Value]:
+    if isinstance(lhs, Pointer) and isinstance(rhs, Pointer):
+        if lhs.mem is not rhs.mem:
+            raise Exception("Can't compare pointers with different underlying memory blocks: {lhs!r} {op} {rhs!r}")
+        return lhs.index, rhs.index
+    else:
+        return lhs, rhs
+
+
 class Declarator(NamedTuple):
     """E.g. `x` or `*x[]` or `**(*x[3])[][4]`, etc."""
     match: ParseMatch
@@ -65,6 +74,10 @@ class InitDeclarator(NamedTuple):
     @property
     def name(self) -> str:
         return self.declarator.name
+
+    @property
+    def kind(self) -> str:
+        return self.declarator.kind
 
 
 class Declaration(NamedTuple):
@@ -244,7 +257,8 @@ class Struct:
                 else:
                     msg = repr(value)
                 parts.append(f'{attr}={msg}')
-        return f"{self.__class__.__name__}({', '.join(parts)})"
+        msg = ', '.join(parts)
+        return f"{self.__class__.__name__}({msg})"
 
     def __repr__(self) -> str:
         return self.mkrepr()
@@ -497,15 +511,16 @@ class Pointer:
         return self.mem.freed
 
     def mkrepr(self, depth=_STRUCT_POINTER_REPR_DEPTH) -> str:
-        if self.mem.size == 1 and self.index == 0 and depth > 0:
+        use_mkrepr = self.mem.size == 1 and self.index == 0 and depth > 0
+        if use_mkrepr:
             value = self.contents
             if isinstance(value, (Struct, Pointer)):
                 msg = value.mkrepr(depth - 1)
             else:
                 msg = repr(value)
-            return f'{self.__class__.__name__}({msg})'
-        msg = f'{self.min_index}..{self.max_index}'
-        if self.mem.size is not None:
+        else:
+            msg = f'{self.min_index}..{self.max_index}'
+        if self.mem.size is not None and not use_mkrepr:
             msg += ', fixed=True'
         if self.freed:
             msg += ', freed=True'
@@ -521,6 +536,14 @@ class Pointer:
     @contents.setter
     def contents(self, value: Value):
         self[0] = value
+
+    def __eq__(self, other) -> bool:
+        if self is other:
+            return True
+        elif isinstance(other, Pointer):
+            return self.mem is other.mem and self.index == other.index
+        else:
+            return False
 
     def __iter__(self) -> Iterator[int]:
         for index in self.mem:
@@ -576,9 +599,22 @@ class CStdlib:
     def __init__(self, mini: 'MiniC'):
         self.mini = mini
 
-        self.stdin = Struct()
-        self.stdout = Struct()
-        self.stderr = Struct()
+        _CSTDLIB_REGISTRY.update(('stdin', 'stdout', 'stderr'))
+        self.stdin = Pointer(Struct())
+        self.stdout = Pointer(Struct())
+        self.stderr = Pointer(Struct())
+
+    def _get_file(self, file):
+        if file is self.stdin:
+            return sys.stdin
+        elif file is self.stdout:
+            return sys.stdout
+        elif file is self.stderr:
+            return sys.stderr
+        else:
+            raise Exception(
+                f"Currently the only supported FILE* values are stdin, stdout, stderr. "
+                f"Got: {file!r}")
 
     @_cstdlib_register
     def malloc(self, size: int = 1) -> Pointer:
@@ -617,13 +653,8 @@ class CStdlib:
             [A]
 
         """
+        file = self._get_file(file)
         # TODO: use a proper C format-string parser...
-        if file is self.stdout:
-            file = sys.stdout
-        elif file is self.stderr:
-            file = sys.stderr
-        else:
-            raise Exception("fprintf is currently only implemented for stdout and stderr!")
         msg = str(fmt) % args
         print(msg, file=file, end='')
 
@@ -633,11 +664,9 @@ class CStdlib:
 
     @_cstdlib_register
     def fgetc(self, file) -> int:
-        if file is self.stdin:
-            c = sys.stdin.read(1)
-            return ord(c)
-        else:
-            raise Exception("fgetc is currently only implemented for stdin!")
+        file = self._get_file(file)
+        c = file.read(1)
+        return ord(c)
 
     @_cstdlib_register
     def getc(self, file) -> int:
@@ -646,6 +675,31 @@ class CStdlib:
     @_cstdlib_register
     def getchar(self) -> int:
         return self.fgetc(self.stdin)
+
+    @_cstdlib_register
+    def fputc(self, c, file):
+        file = self._get_file(file)
+        if isinstance(c, int):
+           c = chr(c)
+        file.write(c)
+
+    @_cstdlib_register
+    def putc(self, c, file):
+        self.fputc(c, file)
+
+    @_cstdlib_register
+    def putchar(self, c):
+        self.fputc(c, self.stdout)
+
+    @_cstdlib_register
+    def fputs(self, s, file):
+        file = self._get_file(file)
+        file.write(s)
+
+    @_cstdlib_register
+    def puts(self, s):
+        self.fputs(s, self.stdout)
+        sys.stdout.write('\n')
 
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
@@ -812,7 +866,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # Add some default stdlib functions
         self.stdlib = CStdlib(self)
         for name in _CSTDLIB_REGISTRY:
-            self.add_python_func(getattr(self.stdlib, name))
+            self.add_global(getattr(self.stdlib, name), name)
 
         # The rules for parsing C typedefs are awful, because they're not
         # purely based on the structure of the grammar, they're also based
@@ -844,6 +898,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             return super().parse(*args, **kwargs)
         finally:
             assert self.typedef_blocks.pop() is block
+
+    def add_global(self, value, name):
+        if inspect.isfunction(value):
+            return self.add_python_func(value, name)
+        else:
+            self.global_scope[name] = Pointer(value)
 
     def add_python_func(self, func, name=None):
         if not isinstance(func, PythonFunction):
@@ -1158,13 +1218,34 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                         # prototypes overwrite the actual functions!..
                         value = scope[name]
                     else:
-                        # Uninitialized variables are assigned a magic Struct
-                        # which allows you to access arbitrary "fields"...
-                        value = Struct()
+                        # Uninitialized variables are assigned a reasonable
+                        # default value
+                        value = self._create_uninitialized_value(
+                            name, init_declarator.declarator)
                         self.set_var(name, value)
                 intialized_values[name] = value
 
         return intialized_values
+
+    def _create_uninitialized_value(self, name: str, declarator: Declarator) -> Value:
+        kind = declarator.kind
+        if kind == 'array':
+            # Array variables are initialized to pointers
+            # backed by an auto-growing memory block
+            return Pointer(MemoryBlock())
+        elif kind == 'func':
+            # Functions are initialized to a function which
+            # tells you that it's uninitialized
+            def func(*args):
+                raise Exception(
+                    f"Function {name!r} "
+                    f"declared at {declarator.match.token.location()} "
+                    "was never defined!")
+            return PythonFunction(func, name)
+        else:
+            # Other kinds of variable are initialized to a
+            # magic Struct object
+            return Struct()
 
     def on_declspec__declaration_specifiers(self, match: ParseMatch):
         # E.g. for struct definitions, like `struct t { int x; };`
@@ -1182,6 +1263,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             return value.contents
         else:
             return value
+
+    def on_initializer_list__initializer(self, match: ParseMatch) -> Value:
+        values = []
+        for child in match.children:
+            values.append(self.on(child))
+        mem = MemoryBlock()
+        for i, value in enumerate(values):
+            mem[i] = value
+        return Pointer(mem)
 
     def on_unary_expression(self, match: ParseMatch) -> Value:
         op = match.children[0].token.value
@@ -1284,7 +1374,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 # maximum permissiveness
                 original_param_values = param_values
                 param_values = list(original_param_values) + [
-                    Struct() for i in range(n_missing_params)]
+                    Struct() for name in func.params[-n_missing_params:]]
             elif len(param_values) > len(func.params):
                 self.warn(f"Calling {func} with {len(param_values)} parameters, extras will be ignored")
             for param_name, param_value in zip(func.params, param_values):
@@ -1421,12 +1511,16 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             elif op == '>>':
                 value >>= arg
             elif op == '<':
+                value, arg = coerce_pointers_for_comparison(value, arg)
                 value = value < arg
             elif op == '>':
+                value, arg = coerce_pointers_for_comparison(value, arg)
                 value = value > arg
             elif op == '<=':
+                value, arg = coerce_pointers_for_comparison(value, arg)
                 value = value <= arg
             elif op == '>=':
+                value, arg = coerce_pointers_for_comparison(value, arg)
                 value = value >= arg
             elif op == '==':
                 value = value == arg

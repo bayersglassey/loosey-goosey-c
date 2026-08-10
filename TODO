@@ -64,6 +64,7 @@
     [X] Handle `#if defined`
 
     [ ] Handle # (stringization) and ## (pasting) operators
+        ...and then un-skip minictests/ops.c.SKIP
 
     [ ] Fix our handling of includes!..
         See: notes/includes.txt
@@ -181,6 +182,12 @@
 
         ...here, the value of _stack needs to be a pointer!
 
+    [ ] Handle arbitrary FILE*, fopen, fclose, etc.
+
+    [ ] Add a Token to structs and memory blocks, for debugging purposes.
+        Also, replace e.g. Struct(x=1, y=2) with Struct({'x': 1, 'y': 2})
+        ...and then we can have Struct({...}, token=...)
+
     [ ] Handle postfix increment/decrement correctly?!..
         Omg. How is the semantics even defined, and can we do that within our
         current "ParseMatch visiting" approach?..
@@ -265,8 +272,11 @@
         but we need a way to also specify whether the function definitions
         etc should be added to a given MiniC instance...
 
-    [ ] Support array/struct initializers {...}
+    [X] Support array initializers, `int x[] = {1, 2};` etc
+
+    [ ] Support struct initializers, `T t = {1, 2};` etc
         ...presumably requires parsing of struct declarations!
+        ...and then un-skip minictests/arrays_and_structs.c.SKIP
 
     [ ] We proooobably can't get away with using our magic Struct in all
         cases... like if we use it where someone expected a union, and they
@@ -279,6 +289,8 @@
             malloc+memset, we can use it like an array of numbers
 
     [ ] Support variadic functions
+
+    [ ] Support enums
 
 [ ] Add C99 support!.. where can we find a grammar for it?
 
