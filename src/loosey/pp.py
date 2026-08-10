@@ -13,6 +13,7 @@
 
 import os
 import sys
+from errno import errorcode
 from typing import NamedTuple, Iterable, Iterator, Optional
 from argparse import ArgumentParser
 
@@ -1233,7 +1234,16 @@ class Preprocessor:
             yield self._stringize(token, tokens)
             return
         ident = token.identifier()
-        if ident == '__FILE__':
+        if ident == '__LOOSEY_DEFINE_ERRCODES__':
+            # Magic token which causes us to define ENOMEM etc...
+            parents = (token,)
+            for value, name in errorcode.items():
+                self.macros[name] = Macro(
+                    name=name,
+                    token=token,
+                    body=[Token.from_parents(parents, 'NUMBER', str(value))],
+                )
+        elif ident == '__FILE__':
             yield Token.from_parents((token,), 'STRING',
                 to_string_literal(token.filename))
         elif ident == '__LINE__':

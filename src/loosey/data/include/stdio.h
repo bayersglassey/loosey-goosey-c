@@ -1,9 +1,24 @@
 #ifndef __LOOSEY_STDIO__
 #define __LOOSEY_STDIO__
 
-#include <stdarg.h>
+#include <stdarg.h> // va_list
+#include <stddef.h> // NULL
 
 // NOTE: this file is based mostly on https://en.cppreference.com/c/header/stdio
+
+#define EOF -1
+#define FOPEN_MAX 1024
+#define FILENAME_MAX 4096
+
+// NOTE: we could get the real value from Python's tempfile.TMP_MAX, which
+// for me is 238328
+#define TMP_MAX 4096
+
+// NOTE: we could get the real value from Python's os.SEEK_SET, etc.
+// The following values are what that gives on my machine.
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
 
 typedef struct __loosey_file__ FILE;
 typedef unsigned size_t;

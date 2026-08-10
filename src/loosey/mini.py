@@ -1,5 +1,6 @@
 import sys
 import inspect
+import errno as errno_module
 from typing import Any, Optional, NamedTuple, Iterator
 from functools import cached_property
 from contextlib import contextmanager
@@ -38,6 +39,51 @@ def value_as_bool(value: Value) -> bool:
         # E.g. Python strings should be interpreted as `const char *`,
         # so always truthy, even the empty string!..
         return True
+
+
+def value_as_int(value: Value) -> int:
+    if isinstance(value, (str, bytes)):
+        return ord(value)
+    else:
+        # NOTE: this will also turn Struct instances into 0
+        return int(value)
+
+
+def value_as_string(value: Value) -> str:
+    """
+
+        >>> value_as_string('hello')
+        'hello'
+
+        >>> value_as_string(b'hello')
+        'hello'
+
+        >>> ptr = Pointer(MemoryBlock())
+        >>> ptr[0] = 'H'
+        >>> ptr[1] = 'i'
+        >>> ptr[2] = '!'
+        >>> value_as_string(ptr)
+        'Hi!'
+
+    """
+    # PROBABLY TODO: use bytes instead of str everywhere...
+    if isinstance(value, str):
+        return value
+    elif isinstance(value, bytes):
+        return value.decode()
+    elif isinstance(value, Pointer):
+        index = 0
+        buf = bytearray()
+        while True:
+            i = value_as_int(value[index])
+            if i == 0:
+                # NUL byte
+                break
+            buf.append(i)
+            index += 1
+        return buf.decode() # I sure hope this is valid UTF-8!..
+    else:
+        return Exception(f"Expected string, got: {value!r}")
 
 
 def copy_value(value: Value) -> Value:
@@ -294,9 +340,10 @@ class Struct:
     #   mem[0]++; // if mem[0] was a Struct, it will now be the number 1
     #
 
-    def __pos__(self) -> Value:
+    def __int__(self) -> Value:
         return 0
-    __neg__ = __pos__
+    __pos__ = __int__
+    __neg__ = __int__
     def __invert__(self) -> Value:
         return ~0
 
@@ -606,10 +653,32 @@ BINARY_EXPRESSION_OPS = {
 }
 
 
-_CSTDLIB_REGISTRY: set[str] = set()
-def _cstdlib_register(func):
-    _CSTDLIB_REGISTRY.add(func.__name__)
-    return func
+# Maps attributes of CStdlib to C variable names
+_CSTDLIB_REGISTRY: dict[str, str] = {}
+
+def _cstdlib_register(_name=None):
+    """Registers a method of CStdlib as a C function"""
+    def decorator(func):
+        name = _name
+        if name is None:
+            name = func.__name__
+        elif not isinstance(name, str):
+            raise Exception(f"Expected str, got: {name!r}")
+        _CSTDLIB_REGISTRY[func.__name__] = name
+        return func
+    return decorator
+
+class FileHandle:
+    """Used by CStdlib to represent FILE* objects"""
+
+    def __init__(self, filename: str, mode: str = '???'):
+        self.filename = filename
+        self.mode = mode
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({self.filename!r}, {self.mode!r})'
+
+FileLikeObject = Any # file-like object
 
 class CStdlib:
     """Python functions implementing (a subset of) the C stdlib for MiniC"""
@@ -617,32 +686,66 @@ class CStdlib:
     def __init__(self, mini: 'MiniC'):
         self.mini = mini
 
-        _CSTDLIB_REGISTRY.update(('stdin', 'stdout', 'stderr'))
-        self.stdin = Pointer(Struct())
-        self.stdout = Pointer(Struct())
-        self.stderr = Pointer(Struct())
+        for name in ('stdin', 'stdout', 'stderr'):
+            _CSTDLIB_REGISTRY[name] = name
+        self.stdin = FileHandle('<stdin>')
+        self.stdout = FileHandle('<stdout>')
+        self.stderr = FileHandle('<stderr>')
 
-    def _get_file(self, file):
-        if file is self.stdin:
-            return sys.stdin
-        elif file is self.stdout:
-            return sys.stdout
-        elif file is self.stderr:
-            return sys.stderr
+        self.errno = 0
+
+        # NOTE: these match what we #define in stddef.h and stdio.h
+        self.NULL = 0
+        self.EOF = -1
+
+        self.open_file_handles: dict[FileHandle, FileLikeObject] = {
+            self.stdin: sys.stdin,
+            self.stdout: sys.stdout,
+            self.stderr: sys.stderr,
+        }
+
+    def _get_file(self, value: Value) -> FileLikeObject:
+        if isinstance(value, FileHandle):
+            # File handle, get the corresponding file-like object
+            file = self.open_file_handles.get(value)
+            if file is None:
+                raise Exception(f"No open file for handle: {value!r}")
+            return file
+        elif hasattr(value, 'read') or hasattr(value, 'write'):
+            # File-like object, use it directly
+            return value
         else:
-            raise Exception(
-                f"Currently the only supported FILE* values are stdin, stdout, stderr. "
-                f"Got: {file!r}")
+            raise Exception(f"Expected file-like object or file handle, got: {value!r}")
 
-    @_cstdlib_register
+    @_cstdlib_register()
+    def __loosey_errno__(self) -> int:
+        # NOTE: in errno.h, we `#define errno __loosey_errno__()`
+        return self.errno
+
+    def set_errno(self, ex: Exception, errno=None):
+        if errno is None:
+            # TODO: set errno based on the actual exception we got...
+            errno = errno_module.EPERM
+        self.errno = errno
+        self.errno_ex = ex
+
+    @_cstdlib_register()
+    def perror(self, msg=None):
+        if msg:
+            msg = f'{msg}: {self.errno_ex}'
+        else:
+            msg = str(self.errno_ex)
+        print(msg, file=sys.stderr)
+
+    @_cstdlib_register()
     def malloc(self, size: int = 1) -> Pointer:
         return Pointer(MemoryBlock(size=size))
 
-    @_cstdlib_register
+    @_cstdlib_register()
     def calloc(self, nmemb: int = 1, size: int = 1) -> Pointer:
         return self.malloc(nmemb * size)
 
-    @_cstdlib_register
+    @_cstdlib_register()
     def realloc(self, ptr: Optional[Pointer], size: int = 1) -> Pointer:
         if ptr is None:
             return self.malloc(size)
@@ -653,76 +756,153 @@ class CStdlib:
             self.memcpy(new_ptr, ptr, ptr.size)
             return new_ptr
 
-    @_cstdlib_register
+    @_cstdlib_register()
     def free(self, ptr: Optional[Pointer]):
         if ptr is not None:
             ptr.free()
 
-    @_cstdlib_register
-    def fprintf(self, file, fmt: str, *args):
+    @_cstdlib_register()
+    def fprintf(self, file, fmt: str, *args) -> int:
         r"""
 
             >>> mini = MiniC()
             >>> mini.stdlib.printf('Hello %s\n', 'world')
             Hello world
-            >>> mini.stdlib.printf('%i + %i = %i', 1, 2, 3)
+            0
+            >>> mini.stdlib.printf('%i + %i = %i\n', 1, 2, 3)
             1 + 2 = 3
-            >>> mini.stdlib.printf('[%c]', 65)
+            0
+            >>> mini.stdlib.printf('[%c]\n', 65)
             [A]
+            0
+
+            >>> buf = Pointer(MemoryBlock())
+            >>> buf[0] = 'H'
+            >>> buf[1] = 'i'
+            >>> buf[2] = '!'
+            >>> mini.stdlib.printf('%s\n', buf)
+            Hi!
+            0
 
         """
         file = self._get_file(file)
         # TODO: use a proper C format-string parser...
+        args = tuple(value_as_string(arg) if isinstance(arg, Pointer) else arg
+            for arg in args)
         msg = str(fmt) % args
         print(msg, file=file, end='')
+        return 0
 
-    @_cstdlib_register
-    def printf(self, fmt: str, *args):
-        self.fprintf(self.stdout, fmt, *args)
+    @_cstdlib_register()
+    def printf(self, fmt: str, *args) -> int:
+        return self.fprintf(self.stdout, fmt, *args)
 
-    @_cstdlib_register
+    @_cstdlib_register()
     def fgetc(self, file) -> int:
         file = self._get_file(file)
         c = file.read(1)
+        if not c:
+            return self.EOF
         return ord(c)
 
-    @_cstdlib_register
+    @_cstdlib_register()
     def getc(self, file) -> int:
         return self.fgetc(file)
 
-    @_cstdlib_register
+    @_cstdlib_register()
     def getchar(self) -> int:
         return self.fgetc(self.stdin)
 
-    @_cstdlib_register
-    def fputc(self, c, file):
+    @_cstdlib_register()
+    def fputc(self, c, file) -> int:
         file = self._get_file(file)
         if isinstance(c, int):
-           c = chr(c)
+            c = chr(c)
         file.write(c)
+        return ord(c)
 
-    @_cstdlib_register
-    def putc(self, c, file):
-        self.fputc(c, file)
+    @_cstdlib_register()
+    def putc(self, c, file) -> int:
+        return self.fputc(c, file)
 
-    @_cstdlib_register
-    def putchar(self, c):
-        self.fputc(c, self.stdout)
+    @_cstdlib_register()
+    def putchar(self, c) -> int:
+        return self.fputc(c, self.stdout)
 
-    @_cstdlib_register
-    def fputs(self, s, file):
+    @_cstdlib_register()
+    def fputs(self, s, file) -> int:
         file = self._get_file(file)
         file.write(s)
+        return 1 # nonnegative number on success, EOF on error
 
-    @_cstdlib_register
-    def puts(self, s):
-        self.fputs(s, self.stdout)
-        sys.stdout.write('\n')
+    @_cstdlib_register()
+    def puts(self, s) -> int:
+        i = self.fputs(s, self.stdout)
+        if i > 0:
+            sys.stdout.write('\n')
+        return i
 
-    @_cstdlib_register
-    def fflush(self, file):
+    @_cstdlib_register()
+    def fgets(self, s, size: int, file):
+        file = self._get_file(file)
+        data = file.read(size - 1)
+        for i, c in enumerate(data):
+            # TODO: figure out how we're going to do strings for real...
+            s[i] = ord(c)
+        return s # return s on success, NULL on error
+
+    @_cstdlib_register()
+    def fflush(self, file) -> int:
         file = self._get_file(file)
         file.flush()
+        return 0 # return 0 on success, EOF on error
+
+    @_cstdlib_register()
+    def fopen(self, filename: str, mode: str = 'r') -> FileHandle:
+        try:
+            file = open(filename, mode)
+        except OSError as ex:
+            # TODO: set errno based on the actual exception we got...
+            errno = errno_module.ENOENT
+            self.set_errno(ex, errno)
+            return self.NULL
+        handle = FileHandle(filename, mode)
+        self.open_file_handles[handle] = file
+        return handle
+
+    @_cstdlib_register()
+    def fclose(self, file) -> FileHandle:
+        file = self._get_file(file)
+        try:
+            file.close()
+        except OSError as ex:
+            self.set_errno(ex)
+            return self.EOF
+        if file in self.open_file_handles:
+            del self.open_file_handles[file]
+        return 0 # return 0 on success, EOF on error
+
+    @_cstdlib_register()
+    def memcpy(self, dst, src, size: Optional[int] = None) -> FileHandle:
+        if size is None:
+            size = min(len(src), len(dst)) # ???
+        raise NotImplementedError("TODO")
+
+    @_cstdlib_register()
+    def fread(self, ptr: Pointer, size: int, nmemb: int, file) -> FileHandle:
+        file = self._get_file(file)
+        data = file.read(size * nmemb)
+        # Copy data into ptr
+        raise NotImplementedError("TODO: probably need to make sure all strings are actually bytes, etc...")
+        self.memcpy(ptr, data)
+
+    @_cstdlib_register()
+    def fwrite(self, ptr: Pointer, size: int, nmemb: int, file) -> FileHandle:
+        file = self._get_file(file)
+        data = bytearray()
+        # Extract size*nmemb bytes from ptr
+        raise NotImplementedError("TODO: probably need to make sure all strings are actually bytes, etc...")
+        file.write()
 
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
@@ -889,8 +1069,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         # Add some default stdlib functions
         self.stdlib = CStdlib(self)
-        for name in _CSTDLIB_REGISTRY:
-            self.add_global(getattr(self.stdlib, name), name)
+        for attr, name in _CSTDLIB_REGISTRY.items():
+            self.add_global(getattr(self.stdlib, attr), name)
 
         # The rules for parsing C typedefs are awful, because they're not
         # purely based on the structure of the grammar, they're also based
@@ -1180,14 +1360,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     # GRAMMAR HANDLER METHODS
 
     def on_function_definition(self, match: ParseMatch) -> Value:
-        declarator = match.find('declarator')
-        name = declarator.find('declare:.').token.value
+        declarator = self.parse_declarator(match.find('declarator'))
+        if declarator.kind != 'func':
+            raise ParseError(match.token, "Trying to define a function using non-function variable")
+        name = declarator.name
+        params_match = declarator.match.find('params:.')
         params = [child.token.value for child in
             # NOTE: might be a parameter_type_list, i.e. (int x, int y), or
             # might be a list of declarator_identifier, i.e. just (x, y)
-            declarator.children[1].findall('.* declare:.', sorted=True)]
+            params_match.findall('.* declare:.', sorted=True)]
         body = match.find('block:compound_statement')
-        variadic = declarator.children[1].find('.* ellipsis') is not None
+        variadic = declarator.match.children[1].find('.* ellipsis') is not None
         function = Function(
             name=name,
             params=params,

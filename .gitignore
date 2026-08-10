@@ -8,3 +8,9 @@ scratch.py
 dist/
 build/
 a.out
+
+# Used by a mini-C doctest for fopen etc
+/test.txt
+
+# Just a random C file I use for testing stuff with gcc
+/test.c

@@ -201,7 +201,12 @@
         ...ah, it wasn't so bad. Actually a lot of stuff is undefined, and
         all we need to do is the obvious thing.
 
-    [ ] Handle arbitrary FILE*, fopen, fclose, etc.
+    [X] Handle arbitrary FILE*, fopen, fclose, etc.
+
+    [ ] Implement string.h (especially memset, memcpy, etc)
+        ...but probably we need to figure out how we're doing strings first,
+        see the relevant TODO... like we should probably use bytes everywhere,
+        not str, etc...
 
     [ ] Add a Token to structs and memory blocks, for debugging purposes.
         Also, replace e.g. Struct(x=1, y=2) with Struct({'x': 1, 'y': 2})
@@ -275,7 +280,7 @@
             Probably string literals should be turned into Python bytes, not str?..
             And printf etc should write bytes, or ASCII?..
             I think writing bytes can't be done in a cross-platform way, because
-            on Windows you can't re-open stdout, or something...
+            on Windows you can't re-open stdin/stdout/stderr, or something...
 
     [ ] Figure out how to implement libraries in Python, e.g. stdio.h,
         stdlib.h, etc.

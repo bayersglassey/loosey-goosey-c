@@ -1,0 +1,2 @@
+Failed to open: doesnt-exist.txt (errno=ENOENT)
+Read: "Hello!"
