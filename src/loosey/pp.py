@@ -29,7 +29,7 @@ from loosey.pplex import (
 )
 from loosey.ppexpr import ConditionalExpressionEvaluator
 from loosey.recursion import debug_recursion, debug_recursion_log
-from loosey.grammar import GrammarEvaluator, ParseMatch
+from loosey.grammar import GrammarEvaluator
 
 
 class ConditionalFrame(NamedTuple):

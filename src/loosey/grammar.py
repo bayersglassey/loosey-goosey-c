@@ -1136,7 +1136,7 @@ class GrammarEvaluator:
 
     def parse_file(self, filename: str, rule_name: Optional[str] = None, **kwargs) -> Optional[ParseMatch]:
         lines = tokenize_file(filename)
-        tokens = self.coerce_lines(tokenize_file(filename))
+        tokens = self.coerce_lines(lines)
         return self.parse(tokens, rule_name, **kwargs)
 
     def parse(
@@ -1173,7 +1173,7 @@ class GrammarEvaluator:
 
     def eval_file(self, filename: str, rule_name: Optional[str] = None, **kwargs):
         lines = tokenize_file(filename)
-        tokens = self.coerce_lines(tokenize_file(filename))
+        tokens = self.coerce_lines(lines)
         return self.eval(tokens, rule_name, **kwargs)
 
     def eval(self, tokens: list[Token] | str, rule_name: Optional[str] = None):
