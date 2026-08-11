@@ -27,7 +27,7 @@ void read_string(char *buf, int size, FILE *file) {
 int main() {
     {
         FILE *f1;
-        f1 = open_file("test.txt", "w");
+        f1 = open_file(".test.txt", "w");
         write_string(f1, "Hello!");
         fclose(f1);
     }
@@ -35,7 +35,7 @@ int main() {
         FILE *f2;
         char buf[10];
         f2 = open_file("doesnt-exist.txt", "r");
-        f2 = open_file("test.txt", "r");
+        f2 = open_file(".test.txt", "r");
         read_string(buf, 7, f2);
         printf("Read: \"%s\"\n", buf);
         fclose(f2);
