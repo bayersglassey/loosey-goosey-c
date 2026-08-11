@@ -213,6 +213,23 @@
         ...but probably we need to figure out how we're doing strings first,
         see the relevant TODO... like we should probably use bytes everywhere,
         not str, etc...
+        Are we ok to use int, or should we implement a Char which is like an
+        int, but with wrapping?.. probably...
+
+        Let's define __eq__ between Struct instances as:
+
+            # NOTE: we can safely assume ptr.index is 0 for all field pointers
+            return all(ptr.mem == other.fields[name].mem
+                for name, ptr in self.fields.items()
+                if name in other.fields)
+
+        And define __eq__ between MemoryBlock instances as:
+
+            return all(value == other.entries[index]
+                for index, value in self.entries.items()
+                if index in other.entries)
+
+    [ ] Rename "index" to "offset" in Pointer and MemoryBlock?..
 
     [ ] Add a Token to structs and memory blocks, for debugging purposes.
         Also, replace e.g. Struct(x=1, y=2) with Struct({'x': 1, 'y': 2})

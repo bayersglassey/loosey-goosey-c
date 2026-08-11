@@ -1,7 +1,7 @@
 import sys
 import inspect
 import errno as errno_module
-from typing import Any, Optional, NamedTuple, Iterator
+from typing import Any, Optional, NamedTuple, Iterator, Sequence
 from functools import cached_property
 from contextlib import contextmanager
 from argparse import ArgumentParser
@@ -91,8 +91,6 @@ def copy_value(value: Value) -> Value:
     if isinstance(value, Struct):
         # Copy the underlying memory for each field
         return value.copy()
-    elif isinstance(value, bytearray):
-        return copy(value)
     else:
         # Everything else, including Pointers, is immutable!..
         # Also, we treat arbitrary Python objects as if they were pointers,
@@ -317,6 +315,21 @@ class Struct:
     def __repr__(self) -> str:
         return self.mkrepr()
 
+
+    def __eq__(self, other) -> bool:
+        if other is self:
+            return True
+        elif isinstance(other, (int, float)):
+            return other == 0
+        elif isinstance(other, Struct):
+            # NOTE: we can safely assume ptr.index and other.fields[name]
+            # are always 0.
+            return all(ptr.mem == other.fields[name].mem
+                for name, ptr in self.fields.items()
+                if name in other.fields)
+        else:
+            return False
+
     def copy(self) -> 'Struct':
         copy = Struct()
         for attr, ptr in self.fields.items():
@@ -384,14 +397,6 @@ class Struct:
         raise ZeroDivisionError
     __rmod__ = __rtruediv__
 
-    def __eq__(self, other) -> bool:
-        if isinstance(other, (int, float)):
-            return other == 0
-        elif isinstance(other, Struct):
-            return dict(self) == dict(other)
-        else:
-            return False
-
     def __lt__(self, other: Value) -> bool:
         return 0 < other
     def __le__(self, other: Value) -> bool:
@@ -402,13 +407,101 @@ class Struct:
         return 0 >= other
 
 
-class MemoryBlock:
+class BaseMemoryBlock:
+    """Behaves like a block of memory in C, i.e. an array of objects.
+    NOTE: this is the base class, don't instantiate directly!"""
+
+    size: Optional[int]
+    min_index: int
+    max_index: int
+
+    def __init__(self):
+        self.freed = False
+
+    def __repr__(self) -> str:
+        msg = f'{self.min_index}..{self.max_index}'
+        if self.size is not None:
+            msg += ', fixed=True'
+        if self.freed:
+            msg += ', freed=True'
+        return f'{self.__class__.__name__}({msg})'
+
+    def __eq__(self, other) -> bool:
+        if other is self:
+            return True
+        elif not isinstance(other, BaseMemoryBlock):
+            return False
+        else:
+            return all(value == other[index]
+                for index, value in self.items()
+                if index in other)
+
+    # To be implemented by subclasses
+    def __iter__(self) -> Iterator[int]: ...
+    def items(self) -> Iterator[tuple[int, Value]]: ...
+    def __contains__(self, index: int) -> bool: ...
+    def __setitem__(self, index: int, value: Value): ...
+    def __getitem__(self, index: int) -> Value: ...
+    def copy(self) -> 'BaseMemoryBlock': ...
+
+    def free(self):
+        if self.freed:
+            raise Exception(f"Attempted to free already-freed memory: {self!r}")
+        else:
+            self.freed = True
+
+
+class PythonMemoryBlock(BaseMemoryBlock):
+    """Behaves like a block of memory in C, i.e. an array of objects.
+    Is backed by any Python object which behaves like a Sequence[Value]."""
+
+    min_index = 0
+
+    def __init__(self, data: Sequence[Value]):
+        super().__init__()
+        self.data = data
+
+    def size(self) -> Optional[int]:
+        return len(self.data)
+
+    @property
+    def max_index(self) -> int:
+        return len(self.data)
+
+    def __iter__(self) -> Iterator[int]:
+        return range(len(self.data))
+
+    def items(self) -> Iterator[tuple[int, Value]]:
+        return enumerate(self.data)
+
+    def __contains__(self, index: int) -> bool:
+        return 0 <= index < len(self.data)
+
+    def __setitem__(self, index: int, value: Value):
+        self.data[index] = value
+
+    def __getitem__(self, index: int) -> Value:
+        return self.data[index]
+
+    def copy(self) -> 'PythonMemoryBlock':
+        # NOTE: we could do something fancy, like use copy.copy, or
+        # copy.deepcopy, but... would that always be correct?!
+        # For now, it's only really safe to pass around *pointers* to Python
+        # objects.
+        raise Exception(
+            f"Can't copy memory blocks backed by Python objects! "
+            f"This one is backed by: {self.data!r}")
+
+
+class MemoryBlock(BaseMemoryBlock):
     """Behaves like a block of memory in C, i.e. an array of objects.
     By default, grows without bounds in negative and positive indexes,
     but can be given a fixed size if desired.
     Should generally be accessed through a Pointer."""
 
     def __init__(self, value: Value = NO_DEFAULT, *, size: Optional[int] = None):
+        super().__init__()
+
         if value is NO_DEFAULT:
             value = Struct()
         self.entries: dict[int, Value] = {0: value}
@@ -420,8 +513,6 @@ class MemoryBlock:
             self.max_index = size - 1
         else:
             self.min_index = self.max_index = 0
-
-        self.freed = False
 
     def copy(self) -> 'MemoryBlock':
         copy = MemoryBlock(size=self.size)
@@ -442,14 +533,6 @@ class MemoryBlock:
             return
         self.entries = dict(sorted(self.entries.items()))
         self._sorted = True
-
-    def __repr__(self) -> str:
-        msg = f'{self.min_index}..{self.max_index}'
-        if self.size is not None:
-            msg += ', fixed=True'
-        if self.freed:
-            msg += ', freed=True'
-        return f'{self.__class__.__name__}({msg})'
 
     def __iter__(self) -> Iterator[int]:
         self._sort_entries()
@@ -488,12 +571,6 @@ class MemoryBlock:
             self.entries[index] = Struct()
             self._update_indexes(index)
         return self.entries[index]
-
-    def free(self):
-        if self.freed:
-            raise Exception(f"Attempted to free already-freed memory: {self!r}")
-        else:
-            self.freed = True
 
 
 class Pointer:
@@ -896,12 +973,6 @@ class CStdlib:
         return 0 # return 0 on success, EOF on error
 
     @_cstdlib_register()
-    def memcpy(self, dst, src, size: Optional[int] = None) -> FileHandle:
-        if size is None:
-            size = min(len(src), len(dst)) # ???
-        raise NotImplementedError("TODO")
-
-    @_cstdlib_register()
     def fread(self, ptr: Pointer, size: int, nmemb: int, file) -> FileHandle:
         file = self._get_file(file)
         data = file.read(size * nmemb)
@@ -916,6 +987,17 @@ class CStdlib:
         # Extract size*nmemb bytes from ptr
         raise NotImplementedError("TODO: probably need to make sure all strings are actually bytes, etc...")
         file.write()
+
+    @_cstdlib_register()
+    def memcpy(self, dst, src, size: Optional[int] = None) -> FileHandle:
+        if size is None:
+            size = min(len(src), len(dst)) # ???
+        raise NotImplementedError("TODO")
+
+    @_cstdlib_register()
+    def strlen(self, s) -> int:
+        s = value_as_string(s)
+        return len(s)
 
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
@@ -1569,6 +1651,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
     def _postfix_reference_operator(self, value: Value, match: ParseMatch) -> Pointer:
         assert match.rule_name == 'postfix_operator'
+        assert self.handler_prefix is None # we are *NOT* in 'reference' prefixed mode
         if match.pattern_name == 'index':
             # e.g. &(x[3]), i.e. &(*(x + 3)), i.e. x + 3
             index = self.on(match.children[0])
