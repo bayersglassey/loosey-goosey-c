@@ -226,6 +226,8 @@ class CStdlib:
 
     @_cstdlib_register()
     def fopen(self, filename: str, mode: str = 'r') -> FileHandle:
+        filename = value_as_string(filename)
+        mode = value_as_string(mode)
         try:
             file = open(filename, mode)
         except OSError as ex:

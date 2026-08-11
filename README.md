@@ -168,7 +168,7 @@ Pointer(4)
 ...     return ptr;
 ... }""")
 >>> mkobj()
-Pointer(Struct(x=3, y=4))
+Pointer(Struct({'x': 3, 'y': 4}))
 
 # Allocating an array of data structures in Python and passing them to C code:
 >>> ptr = mini.stdlib.malloc(3)
@@ -176,9 +176,9 @@ Pointer(Struct(x=3, y=4))
 ...     ptr[i]['x'] = i * 2
 ...     ptr[i]['y'] = i * 5
 ...     ptr[i]
-Struct(x=0, y=0)
-Struct(x=2, y=5)
-Struct(x=4, y=10)
+Struct({'x': 0, 'y': 0})
+Struct({'x': 2, 'y': 5})
+Struct({'x': 4, 'y': 10})
 >>> mini.eval(r"""f(struct t *objs) {
 ...     int i;
 ...     for (i = 0; i < 3; i += 1) printf("%i, %i\n", objs[i].x, objs[i].y);

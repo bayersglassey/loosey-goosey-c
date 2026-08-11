@@ -16,6 +16,7 @@ Value = Any
 
 
 def value_as_bool(value: Value) -> bool:
+    """Interpret a C value as a boolean"""
     if value is None:
         return False
     elif isinstance(value, (int, float)):
@@ -30,6 +31,7 @@ def value_as_bool(value: Value) -> bool:
 
 
 def value_as_int(value: Value) -> int:
+    """Interpret a C value as an integer"""
     if isinstance(value, (str, bytes)):
         return ord(value)
     else:
@@ -38,7 +40,7 @@ def value_as_int(value: Value) -> int:
 
 
 def value_as_string(value: Value) -> str:
-    """
+    """Interpret a C value as a string
 
         >>> value_as_string('hello')
         'hello'
@@ -60,10 +62,9 @@ def value_as_string(value: Value) -> str:
     elif isinstance(value, bytes):
         return value.decode()
     elif isinstance(value, Pointer):
-        index = 0
         buf = bytearray()
-        while True:
-            i = value_as_int(value[index])
+        for index, elem in value.items():
+            i = value_as_int(elem)
             if i == 0:
                 # NUL byte
                 break
@@ -79,6 +80,12 @@ def copy_value(value: Value) -> Value:
     if isinstance(value, Struct):
         # Copy the underlying memory for each field
         return value.copy()
+    elif isinstance(value, (str, bytes, list, tuple, bytearray)):
+        # TODO: this works well, but is it general enough?..
+        # Do we want to do a check for isinstance(value, Sequence) etc?..
+        # Is copy_value the correct place to wrap sequences in
+        # SequenceBackedMemoryBlock?.. etc
+        return Pointer(SequenceBackedMemoryBlock(value))
     else:
         # Everything else, including Pointers, is immutable!..
         # Also, we treat arbitrary Python objects as if they were pointers,
@@ -247,25 +254,22 @@ class Struct:
         >>> obj['y']
         Struct()
         >>> obj
-        Struct(x=2, y=Struct())
-
-        If the nesting is too deep, the repr will be truncated:
-        >>> obj = Struct()
-        >>> obj['a']['b']['c']['d']['e']['f'] = 3
-        >>> obj
-        Struct(a=Struct(b=Struct(c=Struct(d=Struct(e)))))
+        Struct({'x': 2, 'y': Struct()})
 
         For convenience, you can set struct fields when calling its
         constructor:
-        >>> Struct(msg='hello', ptr=Pointer(Struct(x=1, y=2)))
-        Struct(msg='hello', ptr=Pointer(Struct(x=1, y=2)))
+        >>> Struct({'msg': 'hello', 'child': Struct()})
+        Struct({'msg': 'hello', 'child': Struct()})
 
     """
 
-    def __init__(self, **kwargs):
-        self.fields: dict[str, Pointer] = {
-            attr: Pointer(value)
-            for attr, value in kwargs.items()}
+    def __init__(self, values: Optional[dict[str, Value]] = None):
+        self.fields: dict[str, Pointer] = {} if not values else {
+            # NOTE: we use size=1 here, because unlike when referring to
+            # a not-yet-extant field of a Struct, here we know we want it
+            # to contain a single value, not an array of values.
+            attr: Pointer(MemoryBlock(value, size=1))
+            for attr, value in values.items()}
 
     def __iter__(self):
         return iter(self.fields)
@@ -287,8 +291,8 @@ class Struct:
 
     def mkrepr(self, depth=_STRUCT_POINTER_REPR_DEPTH) -> str:
         if depth <= 0:
-            parts = list(self.fields)
-        else:
+            msg = ', '.join(self.fields)
+        elif self.fields:
             parts = []
             for attr, ptr in self.fields.items():
                 value = ptr.contents
@@ -296,13 +300,14 @@ class Struct:
                     msg = value.mkrepr(depth - 1)
                 else:
                     msg = repr(value)
-                parts.append(f'{attr}={msg}')
-        msg = ', '.join(parts)
+                parts.append(f'{attr!r}: {msg}')
+            msg = '{' + ', '.join(parts) + '}'
+        else:
+            msg = ''
         return f"{self.__class__.__name__}({msg})"
 
     def __repr__(self) -> str:
         return self.mkrepr()
-
 
     def __eq__(self, other) -> bool:
         if other is self:
@@ -623,8 +628,14 @@ class Pointer:
 
     """
 
-    def __init__(self, mem: MemoryBlock | Value, index: int = 0):
-        if not isinstance(mem, MemoryBlock):
+    def __init__(self, mem: BaseMemoryBlock | Value, index: int = 0):
+        if not isinstance(mem, BaseMemoryBlock):
+            # If we're given a value, create a memory block containing just
+            # that value.
+            # This can be used for struct fields and variables which contain
+            # a single value, and the fact that our constructor supports it
+            # means that we can have a nice __repr__ which is actually
+            # accurate.
             mem = MemoryBlock(mem, size=1)
         self.__dict__['mem'] = mem
         self.__dict__['index'] = index
@@ -667,6 +678,10 @@ class Pointer:
     def as_list(self) -> list[Value]:
         # Particularly useful for doctests!..
         return [self[i] for i in range(self.min_index, self.max_index + 1)]
+
+    def as_string(self) -> str:
+        # Particularly useful for doctests!..
+        return value_as_string(self)
 
     @property
     def contents(self) -> Value:

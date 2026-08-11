@@ -1,0 +1,41 @@
+
+How do we handle the C concept of `char *`?
+It seems clear that a Python str or bytes should be usable as `const char *`,
+as should bytearray and list[int].
+But as soon as we want to be able to modify a `char *`, it should be a
+Pointer to a block of memory containing int (or Char, i.e. integers with
+wrapping behaviour).
+Ideally, even bytearray and list[int] would be usable as modifiable `char *`,
+at least as long as `value[i]` was used instead of `*(value + i)`.
+
+Can we just do the conversion in copy_value?..
+That would work, although it would convert Python str/bytes to Pointer.
+Ah, unless we say that str/bytes are `const char *`, and therefore copy_value
+doesn't convert them!
+
+Let's do that.
+And then, regarding the behaviour of str (which contains Unicode), for now
+`value[i]` can... oh actually see what I'm about to type next:
+
+By the way, if we're going to treat str, bytes, bytearray, list, etc as
+pointers, then we probably want to support `ptr + i`, `ptr - i`, and `*ptr`
+for them as well.
+So, let's have a Pointer subclass, like PointerView or PythonPointer, which
+wraps an object plus an offset.
+Orrrr do we want to use something more like MemoryBlock?.. PythonMemoryBlock?
+No: SequenceBackedMemoryBlock.
+That would probably be nicer: then Pointer's whole job is to manage the
+offset into self.mem, whatever that might be.
+
+Also, let's define __eq__ between Struct instances as:
+
+    # NOTE: we can safely assume ptr.index is 0 for all field pointers
+    return all(ptr.mem == other.fields[name].mem
+        for name, ptr in self.fields.items()
+        if name in other.fields)
+
+And define __eq__ between MemoryBlock instances as:
+
+    return all(value == other.entries[index]
+        for index, value in self.entries.items()
+        if index in other.entries)

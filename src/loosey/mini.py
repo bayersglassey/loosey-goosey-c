@@ -178,7 +178,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         ...     return ptr;
         ... }''')
         >>> mkobj()
-        Pointer(Struct(x=3, y=4))
+        Pointer(Struct({'x': 3, 'y': 4}))
 
     """
 
@@ -675,8 +675,16 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             index = self.on(match.children[0])
             return value[index]
         elif match.pattern_name == 'call':
-            param_values = [copy_value(self.on(child))
-                for child in match.children]
+            if isinstance(value, Function):
+                param_values = [copy_value(self.on(child))
+                    for child in match.children]
+            else:
+                # Don't use copy_value if we're not calling C code!..
+                # This lets us do things like `d->get("x")` in C where d is
+                # a Python dict, and we want the Python string "x" to be
+                # passed along as-is, not converted to a Pointer.
+                param_values = [self.on(child)
+                    for child in match.children]
             value = self.dereference(value) # handle function pointers
             return value(*param_values)
         elif match.pattern_name in ('dot', 'arrow'):
