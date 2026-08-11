@@ -439,7 +439,7 @@ class BaseMemoryBlock:
             self.freed = True
 
 
-class PythonMemoryBlock(BaseMemoryBlock):
+class SequenceBackedMemoryBlock(BaseMemoryBlock):
     """Behaves like a block of memory in C, i.e. an array of objects.
     Is backed by any Python object which behaves like a Sequence[Value]."""
 
@@ -471,7 +471,7 @@ class PythonMemoryBlock(BaseMemoryBlock):
     def __getitem__(self, index: int) -> Value:
         return self.data[index]
 
-    def copy(self) -> 'PythonMemoryBlock':
+    def copy(self) -> 'SequenceBackedMemoryBlock':
         # NOTE: we could do something fancy, like use copy.copy, or
         # copy.deepcopy, but... would that always be correct?!
         # For now, it's only really safe to pass around *pointers* to Python
