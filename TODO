@@ -203,6 +203,8 @@
 
     [X] Handle arbitrary FILE*, fopen, fclose, etc.
 
+    [X] Parsing this fails: `int atexit(void (*)(void));`
+
     [ ] Better run-time error messages!..
         But see also the TODO about better parsing error messages, which might
         be good to do first...
@@ -314,6 +316,44 @@
         See: https://en.cppreference.com/c/variadic/va_arg
 
     [ ] Support enums
+
+[ ] LOOSIER AND GOOSIER PARSING OF TYPE NAMES:
+    Currently, we only mark an identifier as being a type name if we encounter
+    an explicit typedef for it.
+    But instead, what if we kept track of which identifiers we've explicitly
+    seen "proof" for being a type name or not?..
+    For instance, if we encounter:
+
+        int f(T x) { ... }
+
+    ...then clearly T is a type name, and x is not.
+    So we can mark them as such (within the appropriate scopes).
+    Now, what if we see:
+
+        void f() {
+            T * x; // declaration, or multiplication?..
+        }
+
+    Of course, if we already have proof that T is or is not a type name,
+    then we have no choice to make.
+    Otherwise, we can just choose an interpretation; and I say we lean
+    towards declaration, since it's the more likely case.
+    And then what about:
+
+        void f() {
+            (T)(x); // cast, or function call?..
+        }
+
+    Again, I think we should just choose an interpretation... this one's
+    tricky, because extra parentheses often show up in C due to macro
+    expansion.
+    But if we were leaning towards declaration in the earlier example,
+    i.e. towards T being a type name, then maybe we do the same here,
+    for consistency.
+
+    And boom, all of a sudden maybe we can parse C snippets without
+    having to copy-paste them into a little file with a minimal set
+    of typedefs!..
 
 [ ] Add C99 support!.. where can we find a grammar for it?
 

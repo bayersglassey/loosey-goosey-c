@@ -211,7 +211,21 @@ class ParseError(Exception):
         # The one case I know we need to support is when we're trying to
         # tokenize a file which consists of a single backslash. O_o
         location = 'unknown' if token is None else token.location()
-        Exception.__init__(self, f"{location}: {msg}")
+        msg = f"{location}: {msg}"
+
+        # Experimental, probably too much info...
+        INCLUDE_PARENTS = False
+        if INCLUDE_PARENTS and token is not None:
+            lines = [msg]
+            def visit_token(token, depth=0):
+                lines.append('  ' * depth + f'...from: {token.location()}')
+                for parent in token.parents:
+                    visit_token(parent, depth+1)
+            for parent in token.parents:
+                visit_token(parent)
+            msg = '\n'.join(lines)
+
+        Exception.__init__(self, msg)
         self.token = token
 
 

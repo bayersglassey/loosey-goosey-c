@@ -42,8 +42,9 @@ lldiv_t       lldiv(long long, long long);
 long          lrand48(void);
 void         *malloc(size_t);
 int           mblen(const char *, size_t);
-size_t        mbstowcs(wchar_t *restrict, const char *restrict, size_t);
-int           mbtowc(wchar_t *restrict, const char *restrict, size_t);
+// We don't support wide chars!
+//size_t        mbstowcs(wchar_t *restrict, const char *restrict, size_t);
+//int           mbtowc(wchar_t *restrict, const char *restrict, size_t);
 char         *mkdtemp(char *);
 int           mkstemp(char *);
 long          mrand48(void);
@@ -77,7 +78,8 @@ unsigned long long
 int           system(const char *);
 int           unlockpt(int);
 int           unsetenv(const char *);
-size_t        wcstombs(char *restrict, const wchar_t *restrict, size_t);
-int           wctomb(char *, wchar_t);
+// We don't support wide chars!
+//size_t        wcstombs(char *restrict, const wchar_t *restrict, size_t);
+//int           wctomb(char *, wchar_t);
 
 #endif

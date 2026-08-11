@@ -234,7 +234,11 @@ enumerator
     | IDENTIFIER ( '=' constant_expression )?
     ;
 
-declarator_identifier
+pointer
+    | pointer: '*' ( type_qualifier )* ( pointer )?
+    ;
+
+param_identifier
     | declare: IDENTIFIER
     ;
 
@@ -245,8 +249,8 @@ declarator_array_suffix
 declarator_suffix
     | array:   declarator_array_suffix ( declarator_array_suffix )*
     | params:  '(' ( parameter_type_list )? ')'
-    # Used in K&R function declarations:
-    | params:  '(' declarator_identifier ( ',' declarator_identifier )* ')'
+    # Used in K&R function declarations, only for non-abstract declarators:
+    | params:  '(' param_identifier ( ',' param_identifier )* ')'
     ;
 
 direct_declarator
@@ -254,12 +258,23 @@ direct_declarator
     | '(' declarator ')'
     ;
 
-pointer
-    | pointer: '*' ( type_qualifier )* ( pointer )?
-    ;
-
 declarator
     | decl: ( pointer )? direct_declarator ( declarator_suffix )?
+    ;
+
+abstract_declarator_suffix
+    | array:   declarator_array_suffix ( declarator_array_suffix )*
+    | params:  '(' ( parameter_type_list )? ')'
+    ;
+
+direct_abstract_declarator
+    | '(' abstract_declarator ')'
+    ;
+
+abstract_declarator
+    # NOTE: currently grammar.py doesn't allow empty matches, which is good,
+    # because we want at least one of the following 3 sub-patterns to match:
+    | decl: ( pointer )? ( direct_abstract_declarator )? ( declarator_suffix )?
     ;
 
 # NOTE: this is its own rule, to make sure it always generates a ParseMatch
@@ -283,17 +298,6 @@ parameter_declaration
 
 type_name
     | specifier_qualifier_list ( abstract_declarator )?
-    ;
-
-abstract_declarator_suffix
-    | array:  '[' ( constant_expression )? ']'
-    | params: '(' ( parameter_type_list )? ')'
-    ;
-
-abstract_declarator
-    | pointer ( abstract_declarator )?
-    | abstract_declarator_suffix ( abstract_declarator_suffix )*
-    | '(' abstract_declarator ')'
     ;
 
 statement

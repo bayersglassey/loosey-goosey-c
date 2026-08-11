@@ -1381,7 +1381,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         params_match = declarator.match.find('params:.')
         params = [child.token.value for child in
             # NOTE: might be a parameter_type_list, i.e. (int x, int y), or
-            # might be a list of declarator_identifier, i.e. just (x, y)
+            # might be a list of param_identifier, i.e. just (x, y)
             params_match.findall('.* declare:.', sorted=True)]
         body = match.find('block:compound_statement')
         variadic = declarator.match.children[1].find('.* ellipsis') is not None
