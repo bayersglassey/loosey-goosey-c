@@ -222,6 +222,8 @@
 
         ...for now, added value_as_pointer, used it in the handlers for [...]
 
+    [X] Support enums
+
     [ ] Better run-time error messages!..
         But see also the TODO about better parsing error messages, which might
         be good to do first...
@@ -342,8 +344,6 @@
 
     [ ] Support variadic functions
         See: https://en.cppreference.com/c/variadic/va_arg
-
-    [ ] Support enums
 
 [ ] LOOSIER AND GOOSIER PARSING OF TYPE NAMES:
     Currently, we only mark an identifier as being a type name if we encounter

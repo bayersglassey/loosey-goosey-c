@@ -182,25 +182,12 @@ declaration
     | decl: declaration_specifiers ( init_declarator ( ',' init_declarator )* )? ';'
     ;
 
-struct_or_union_or_enum_tag
-    | IDENTIFIER
-    ;
-
-struct_or_union_specifier
-    | struct_or_union ( struct_or_union_or_enum_tag )? '{' struct_declaration_list '}'
-    | struct_or_union struct_or_union_or_enum_tag
-    ;
-
 struct_or_union
     | [ 'struct' 'union' ]
     ;
 
-struct_declaration_list
-    | struct_declaration ( struct_declaration )*
-    ;
-
-struct_declaration
-    | specifier_qualifier_list struct_declarator_list ';'
+struct_or_union_or_enum_tag
+    | IDENTIFIER
     ;
 
 specifier_qualifier
@@ -208,30 +195,48 @@ specifier_qualifier
     | type_qualifier
     ;
 
-specifier_qualifier_list
-    | specifier_qualifier ( specifier_qualifier )*
+direct_bitfield_declarator
+    | declare: IDENTIFIER
+    | '(' direct_bitfield_declarator ')'
     ;
 
-struct_declarator_list
-    | struct_declarator ( ',' struct_declarator )*
+field_declarator
+    | bitfield: ( direct_bitfield_declarator )? ':' constant_expression
+    | decl:     declarator
     ;
 
-struct_declarator
-    | declarator ( ':' constant_expression )?
-    | ':' constant_expression
+field_declaration_specifiers
+    | declspec: specifier_qualifier ( specifier_qualifier )*
+    ;
+
+field_declaration
+    | field_declaration_specifiers field_declarator ( ',' field_declarator )* ';'
+    ;
+
+field_declaration_list
+    | fields: field_declaration ( field_declaration )*
+    ;
+
+struct_or_union_specifier
+    | struct_or_union ( struct_or_union_or_enum_tag )? '{' field_declaration_list '}'
+    | struct_or_union struct_or_union_or_enum_tag
     ;
 
 enum_specifier
-    | 'enum' struct_or_union_or_enum_tag ( '{' enumerator_list '}' )?
-    | 'enum' '{' enumerator_list '}'
+    | enum: 'enum' struct_or_union_or_enum_tag ( '{' enumerator_list '}' )?
+    | enum: 'enum' '{' enumerator_list '}'
     ;
 
 enumerator_list
-    | enumerator ( ',' enumerator )*
+    | enums: enumerator ( ',' enumerator )* ( ',' )?
+    ;
+
+enum_identifier
+    | IDENTIFIER
     ;
 
 enumerator
-    | IDENTIFIER ( '=' constant_expression )?
+    | enum_identifier ( '=' constant_expression )?
     ;
 
 pointer
@@ -297,7 +302,7 @@ parameter_declaration
     ;
 
 type_name
-    | specifier_qualifier_list ( abstract_declarator )?
+    | specifier_qualifier ( specifier_qualifier )* ( abstract_declarator )?
     ;
 
 statement

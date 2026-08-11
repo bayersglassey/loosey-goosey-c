@@ -17,6 +17,7 @@ from loosey.runtime import (
     Declaration,
     Declarator,
     InitDeclarator,
+    StructOrUnion,
     Function,
     PythonFunction,
     TypeDef,
@@ -320,11 +321,25 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         finally:
             assert self.scopes.pop() is scope
 
+    def var_lookup_error(self, name: str) -> Exception:
+        names_msg = ' '.join(f"{{{' '.join(scope)}}}" for scope in self.scopes)
+        raise Exception(f"Object not found: {name!r} (names currently in scope: {names_msg})")
+
     def have_var(self, name: str) -> bool:
         for scope in reversed(self.scopes):
             if name in scope:
                 return True
         return False
+
+    def get_var_ref(self, name: str, raise_ex: bool = True) -> Pointer:
+        """Get a reference to the indicated variable"""
+        for scope in reversed(self.scopes):
+            if name in scope:
+                return scope[name]
+        if raise_ex:
+            raise self.var_lookup_error(name)
+        else:
+            return None
 
     def get_var(self, name: str, default=NO_DEFAULT) -> Value:
         """Get the value of the indicated variable (including functions,
@@ -337,18 +352,21 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             return default
 
-    def get_var_ref(self, name: str) -> Pointer:
-        """Get a reference to the indicated variable"""
-        for scope in reversed(self.scopes):
-            if name in scope:
-                return scope[name]
-        raise self.var_lookup_error(name)
-
-    def var_lookup_error(self, name: str) -> Exception:
-        names_msg = ' '.join(f"{{{' '.join(scope)}}}" for scope in self.scopes)
-        raise Exception(f"Object not found: {name!r} (names currently in scope: {names_msg})")
-
     def set_var(self, name: str, value: Value):
+        """Sets the value of the indicated variable (including functions,
+        typedefs, etc).
+        Uses an existing variable if found, otherwise declares one within
+        the current scope."""
+        ptr = self.get_var_ref(name, False)
+        if ptr is None:
+            scope = self.scopes[-1]
+            scope[name] = Pointer(value)
+        else:
+            ptr.contents = value
+
+    def declare_var(self, name: str, value: Value):
+        """Sets the value of the indicated variable (including functions,
+        typedefs, etc) within the current scope, creating it if necessary."""
         scope = self.scopes[-1]
         if name in scope:
             scope[name].contents = value
@@ -368,8 +386,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
             >>> mini = MiniC()
 
-            >>> def test(text):
-            ...     match = mini.parse(text, 'declarator')
+            >>> def test(text, rule_name='declarator'):
+            ...     match = mini.parse(text, rule_name)
             ...     decl = mini.parse_declarator(match)
             ...     return decl.name, decl.kind
 
@@ -426,8 +444,20 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             >>> test('(*x)[]')
             ('x', 'pointer')
 
+        This all needs to also work when parsing declarators within struct or
+        union declarations:
+
+            >>> test('(*x)[]', 'field_declarator')
+            ('x', 'pointer')
+
+            Also, we need to handle bitfields:
+            >>> test('x: 4', 'field_declarator')
+            ('x', 'bitfield')
+
         """
-        assert match.rule_name == 'declarator'
+        assert match.rule_name in ('declarator', 'field_declarator'), match
+
+        is_bitfield = match.pattern_name == 'bitfield'
 
         # Find the stuff within the innermost set of parentheses...
         # 1. `*(*(**x[3])[])()` -> `**x[3]`
@@ -445,7 +475,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             child = next_child
 
         suffix = innermost_match.find('declarator_suffix')
-        if suffix:
+        if is_bitfield:
+            # Our grammar should prevent there being a suffix
+            assert suffix is None
+            kind = 'bitfield'
+        elif suffix:
             if suffix.pattern_name == 'array':
                 kind = 'array'
             elif suffix.pattern_name == 'params':
@@ -473,7 +507,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         return declaration
 
     def _parse_declaration(self, match: ParseMatch) -> Declaration:
-        assert match.rule_name == 'declaration'
+        assert match.rule_name in ('declaration', 'field_declaration'), match
 
         # The declaration specifiers, e.g. 'int'
         declspec = match.children[0]
@@ -487,9 +521,19 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # Init declarators, e.g. `x`, `*x[3]`, `x = 2`, etc
         init_declarators: list[InitDeclarator] = []
         for child in match.children[1:]:
-            assert child.rule_name == 'init_declarator'
-            declarator = self.parse_declarator(child.children[0])
-            initializer = child.children[1] if len(child.children) > 1 else None
+            assert child.rule_name in ('init_declarator', 'field_declarator'), child
+            if child.rule_name == 'init_declarator':
+                initializer = child.children[1] if len(child.children) > 1 else None
+                child = child.children[0] # now child is the declarator
+            else:
+                # For field_declarator, there is never an initializer
+                initializer = None
+            is_bitfield = child.pattern_name == 'bitfield'
+            if is_bitfield and len(child.children) == 1:
+                # Anonymous bitfield!.. just used for padding, we ignore
+                # it completely
+                continue
+            declarator = self.parse_declarator(child)
             init_declarators.append(InitDeclarator(declarator, initializer))
 
         return Declaration(
@@ -530,7 +574,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             body=body,
             call=self.call_func,
         )
-        self.set_var(name, function)
+        self.declare_var(name, function)
         return function
 
     def on_cast__cast_expression(self, match: ParseMatch) -> Value:
@@ -544,6 +588,116 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # other than char *.
         return self.on(match.children[1])
 
+    def on_enum__enum_specifier(self, match: ParseMatch) -> tuple[Optional[str], dict[str, int]]:
+        """
+
+            >>> mini = MiniC()
+
+            >>> mini.eval('enum T', 'enum_specifier')
+            ('T', {})
+
+            >>> mini.eval('enum { x }', 'enum_specifier')
+            (None, {'x': 0})
+
+            >>> mini.eval('enum T { x, y = 2, z, }', 'enum_specifier')
+            ('T', {'x': 0, 'y': 2, 'z': 3})
+
+        """
+
+        tag_match = match.find('struct_or_union_or_enum_tag')
+        tag = None if tag_match is None else tag_match.token.value
+
+        values_match = match.find('enumerator_list')
+        if values_match:
+            values = {}
+            next_value = 0
+            for child in values_match.children:
+                if child.children:
+                    # e.g. `x = 1`
+                    name = child.children[0].token.value
+                    value = self.on(child.children[1])
+                else:
+                    # e.g. `x`
+                    name = child.token.value
+                    value = next_value
+                if name in values:
+                    raise ParseError(child.token, "Duplicate enum name: {name!r}")
+                values[name] = value
+                next_value = value + 1
+        else:
+            values = {}
+
+        # Turn the enum values into variables!..
+        # We don't currently have a way to mark them as "constant", so it will
+        # actually be possible to take their address, like regular variables.
+        # Also, note that these values are *not* necessarily global!..
+        # Typedefs, variables, functions, and enum values all use the same
+        # "namespace":
+        #
+        #   enum { X = 1 };
+        #
+        #   main() {
+        #       printf("%i\n", X); // prints 1
+        #       {
+        #           enum { X = 2 };
+        #           printf("%i\n", X); // prints 2
+        #       }
+        #       printf("%i\n", X); // prints 1 again
+        #   }
+        #
+        for name, value in values.items():
+            self.declare_var(name, value)
+
+        return (tag, values)
+
+    def on_struct_or_union_specifier(self, match: ParseMatch) -> StructOrUnion:
+        """
+
+            >>> mini = MiniC()
+
+            >>> mini.eval('struct T', 'struct_or_union_specifier').pprint()
+            struct T:
+
+            >>> mini.eval('struct { int x; }', 'struct_or_union_specifier').pprint()
+            struct:
+              x
+
+            >>> mini.eval('struct T { int x; }', 'struct_or_union_specifier').pprint()
+            struct T:
+              x
+
+            >>> mini.eval('struct { const int x, y; int data[]; }',
+            ...     'struct_or_union_specifier').pprint()
+            struct:
+              const x, y
+              data(array)
+
+            Bitfields are supported:
+            >>> mini.eval('struct { int x, flag:2, :4, y; }',
+            ...     'struct_or_union_specifier').pprint()
+            struct:
+              x, flag(bitfield), y
+
+        """
+
+        kind = match.children[0].token.value # 'struct' or 'union'
+
+        tag_match = match.find('struct_or_union_or_enum_tag')
+        tag = None if tag_match is None else tag_match.token.value
+
+        fields_match = match.find('field_declaration_list')
+        fields = () if fields_match is None else fields_match.children
+
+        declarations = []
+        for child in fields:
+            declarations.append(self.parse_declaration(child))
+
+        return StructOrUnion(
+            kind=kind,
+            tag=tag,
+            field_declarations=declarations,
+        )
+
     def on_declaration_list(self, match: ParseMatch) -> dict[str, Value]:
         intialized_values = {}
         for child in match.children:
@@ -553,7 +707,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def on_decl__declaration(self, match: ParseMatch) -> dict[str, Value]:
         """
 
-            >>> from loosey.mini import MiniC; mini = MiniC()
+            >>> mini = MiniC()
             >>> mini.eval('int x;')
             {'x': Struct()}
             >>> mini.eval('int x = 1;')
@@ -587,6 +741,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         intialized_values = {}
 
         declaration = self.parse_declaration(match)
+
+        # Handle struct, union, enum declarations
+        for child in declaration.declspec.children:
+            if child.rule_name in (
+                'enum_specifier',
+                'struct_or_union_specifier',
+            ):
+                self.on(child)
+
         if declaration.is_typedef:
             # Handle typedefs
             for init_declarator in declaration.init_declarators:
@@ -596,7 +759,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     declaration=declaration,
                     init_declarator=init_declarator,
                 )
-                self.set_var(name, value)
+                self.declare_var(name, value)
                 intialized_values[name] = value
         else:
             # Handle variable initializations
@@ -618,7 +781,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     else:
                         # E.g. `= 3`, `= "hello"`, etc
                         value = copy_value(self.on(initializer), initializer=True)
-                    self.set_var(name, value)
+                    self.declare_var(name, value)
                 else:
                     scope = self.scopes[-1]
                     if name in scope:
@@ -632,7 +795,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                         # default value
                         value = self._create_uninitialized_value(
                             name, init_declarator.declarator)
-                        self.set_var(name, value)
+                        self.declare_var(name, value)
                 intialized_values[name] = value
 
         return intialized_values
@@ -846,18 +1009,24 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             # This should never happen
             raise ParseError(token, f"Dunno literal: {match.prettystring()}")
 
-    def _eval_children(self, match: ParseMatch):
+    def _eval_children(self, match: ParseMatch) -> Value:
         value = None
         for child in match.children:
             value = self.on(child)
         return value
 
-    on_block__compound_statement = _eval_children
     on_statement_list = _eval_children
     on_translation_unit = _eval_children
     on_expression = _eval_children
     on_expression_statement = _eval_children
     on_trailing__repl_expression = _eval_children
+
+    def on_block__compound_statement(self, match: ParseMatch) -> Value:
+        value = None
+        with self.new_scope() as scope:
+            for child in match.children:
+                value = self.on(child)
+        return value
 
     def on_label__labeled_statement(self, match: ParseMatch) -> Value:
         return self.on(match.children[1])

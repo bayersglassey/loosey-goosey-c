@@ -148,12 +148,13 @@ class Declarator(NamedTuple):
     """E.g. `x` or `*x[]` or `**(*x[3])[][4]`, etc."""
     match: ParseMatch
     name: str
-    kind: Optional[str] # None or 'pointer' or 'array' or 'func'
+    kind: Optional[str] # None or 'pointer' or 'array' or 'func' or 'bitfield'
 
 
 class InitDeclarator(NamedTuple):
+    """An init_declarator or a field_declarator"""
     declarator: Declarator
-    initializer: Optional[ParseMatch]
+    initializer: Optional[ParseMatch] = None
 
     @property
     def name(self) -> str:
@@ -169,11 +170,36 @@ class Declaration(NamedTuple):
     match: ParseMatch
     declspec: ParseMatch
     specifiers: set[str] # 'typedef', 'extern', 'const', etc
+
+    # These might be init declarators, or field declarators...
     init_declarators: list[InitDeclarator]
 
     @property
     def is_typedef(self) -> bool:
         return 'typedef' in self.specifiers
+
+
+class StructOrUnion(NamedTuple):
+    kind: str # 'struct' or 'union'
+    tag: Optional[str]
+    field_declarations: list[Declaration]
+
+    def pprint(self):
+        msg = self.kind
+        if self.tag is not None:
+            msg = f'{msg} {self.tag}'
+        print(f"{msg}:")
+        for declaration in self.field_declarations:
+            parts = []
+            for init_declarator in declaration.init_declarators:
+                part = init_declarator.name
+                if init_declarator.kind:
+                    part = f'{part}({init_declarator.kind})'
+                parts.append(part)
+            msg = ', '.join(parts)
+            if declaration.specifiers:
+                msg = f"{' '.join(declaration.specifiers)} {msg}"
+            print(f"  {msg}")
 
 
 class TypeDef(NamedTuple):
