@@ -30,6 +30,8 @@ from loosey.runtime import (
     Goto,
     Exit,
     value_as_bool,
+    value_as_int,
+    value_as_pointer,
     copy_value,
     coerce_pointers_for_comparison,
 )
@@ -549,6 +551,39 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         return intialized_values
 
     def on_decl__declaration(self, match: ParseMatch) -> dict[str, Value]:
+        """
+
+            >>> from loosey.mini import MiniC; mini = MiniC()
+            >>> mini.eval('int x;')
+            {'x': Struct()}
+            >>> mini.eval('int x = 1;')
+            {'x': 1}
+            >>> mini.eval('int x;')
+            {'x': 1}
+            >>> mini.eval('char *s = "abc";')
+            {'s': Pointer(0..2)}
+            >>> mini.eval('char s[] = "abc";')
+            {'s': Pointer(0..2)}
+            >>> mini.eval('char c = "abc"[1];')
+            {'c': 98}
+            >>> mini.eval('typedef int Integer;')
+            {'Integer': TypeDef('Integer')}
+            >>> mini.eval('int add();')
+            {'add': add(...)}
+            >>> mini.eval('int data[3];')
+            {'data': Pointer(0..0)}
+            >>> mini.eval('int data[] = {1, 2, 3, 4};')
+            {'data': Pointer(0..3)}
+            >>> mini.eval('data[2]')
+            3
+            >>> mini.eval('int data[][2] = {{1, 2}, {3, 4}, {5, 6}};')
+            {'data': Pointer(0..2)}
+            >>> mini.eval('data[1][1]')
+            4
+            >>> mini.eval('data[1]')
+            Pointer(0..1)
+
+        """
         intialized_values = {}
 
         declaration = self.parse_declaration(match)
@@ -567,16 +602,22 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             # Handle variable initializations
             for init_declarator in declaration.init_declarators:
                 name = init_declarator.name
-                kind = init_declarator.kind
+                is_array = init_declarator.kind == 'array'
                 initializer = init_declarator.initializer
                 if initializer is not None:
-                    if initializer.spec == 'initializer_list:initializer' and kind != 'array':
-                        # TODO: implement struct initialization lists...
-                        # HACK: for now, we just make sure `= {0}` works
-                        value = self._create_uninitialized_value(
-                            name, init_declarator.declarator)
+                    is_initializer_list = initializer.spec == 'initializer_list:initializer'
+                    if is_initializer_list:
+                        # E.g. `= {0}`, `= {1, 2}`, `= {{1, 2}, {3, 4}}`, etc
+                        if is_array:
+                            value = copy_value(self.on(initializer), initializer=True)
+                        else:
+                            # TODO: implement struct initialization lists...
+                            # HACK: for now, we just make sure `= {0}` works
+                            value = self._create_uninitialized_value(
+                                name, init_declarator.declarator)
                     else:
-                        value = copy_value(self.on(initializer))
+                        # E.g. `= 3`, `= "hello"`, etc
+                        value = copy_value(self.on(initializer), initializer=True)
                     self.set_var(name, value)
                 else:
                     scope = self.scopes[-1]
@@ -585,7 +626,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                         # overwrite with a fresh Struct.
                         # In particular, we don't want to have function
                         # prototypes overwrite the actual functions!..
-                        value = scope[name]
+                        value = scope[name].contents
                     else:
                         # Uninitialized variables are assigned a reasonable
                         # default value
@@ -672,7 +713,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def _postfix_operator(self, value: Value, match: ParseMatch) -> Value:
         assert match.rule_name == 'postfix_operator'
         if match.pattern_name == 'index':
-            index = self.on(match.children[0])
+            value = value_as_pointer(value)
+            index = value_as_int(self.on(match.children[0]))
             return value[index]
         elif match.pattern_name == 'call':
             if isinstance(value, Function):
@@ -716,7 +758,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         assert self.handler_prefix is None # we are *NOT* in 'reference' prefixed mode
         if match.pattern_name == 'index':
             # e.g. &(x[3]), i.e. &(*(x + 3)), i.e. x + 3
-            index = self.on(match.children[0])
+            value = value_as_pointer(value)
+            index = value_as_int(self.on(match.children[0]))
             return value + index
         elif match.pattern_name in ('dot', 'arrow'):
             attr = match.children[0].token.value

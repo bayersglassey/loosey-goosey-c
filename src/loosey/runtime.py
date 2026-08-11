@@ -1,5 +1,13 @@
 import inspect
-from typing import Any, Optional, NamedTuple, Iterator, Sequence, Callable
+from typing import (
+    Any,
+    Optional,
+    NamedTuple,
+    Iterator,
+    Iterable,
+    Sequence,
+    Callable,
+)
 from functools import cached_property
 
 from loosey.grammar import ParseMatch
@@ -13,6 +21,8 @@ POSITIONAL_PARAM_KINDS = (
 NO_DEFAULT = object()
 
 Value = Any
+
+_SEQUENCE_TYPES = (str, bytes, list, tuple, bytearray)
 
 
 def value_as_bool(value: Value) -> bool:
@@ -62,6 +72,13 @@ def value_as_string(value: Value) -> str:
     elif isinstance(value, bytes):
         return value.decode()
     elif isinstance(value, Pointer):
+
+        # We could do something fancy like this as an optimization, but we
+        # need to be careful of the meaning of negative string indexes in
+        # Python, etc...
+        #if isinstance(value.mem, SequenceBackedMemoryBlock):
+        #    return value.mem.data[value.index:]
+
         buf = bytearray()
         for index, elem in value.items():
             i = value_as_int(elem)
@@ -75,17 +92,42 @@ def value_as_string(value: Value) -> str:
         return Exception(f"Expected string, got: {value!r}")
 
 
-def copy_value(value: Value) -> Value:
+def value_as_pointer(value: Value) -> 'Pointer':
+    """Interpret a C value as a pointer, e.g. so that we can try to do
+    C array operations with it
+
+        >>> value_as_pointer([10, 20, 30])
+        Pointer(0..3, fixed=True)
+
+        >>> value_as_pointer([10, 20, 30])[1]
+        20
+
+    """
+    if isinstance(value, Pointer):
+        return value
+    elif isinstance(value, _SEQUENCE_TYPES):
+        return Pointer(SequenceBackedMemoryBlock(value))
+    else:
+        raise Exception(f"Can't interpret as a pointer: {value!r}")
+
+
+def copy_value(value: Value, *, initializer: bool = False) -> Value:
     """Copy a C value"""
     if isinstance(value, Struct):
         # Copy the underlying memory for each field
         return value.copy()
-    elif isinstance(value, (str, bytes, list, tuple, bytearray)):
+    elif isinstance(value, _SEQUENCE_TYPES):
         # TODO: this works well, but is it general enough?..
         # Do we want to do a check for isinstance(value, Sequence) etc?..
         # Is copy_value the correct place to wrap sequences in
         # SequenceBackedMemoryBlock?.. etc
-        return Pointer(SequenceBackedMemoryBlock(value))
+        if initializer:
+            # If we're an initializer, e.g. `char stuff[] = "Hello"`, then
+            # we want to truly copy the data, not use it directly!
+            # Because e.g. str is immutable.
+            return Pointer(MemoryBlock.from_sequence(value))
+        else:
+            return Pointer(SequenceBackedMemoryBlock(value))
     else:
         # Everything else, including Pointers, is immutable!..
         # Also, we treat arbitrary Python objects as if they were pointers,
@@ -160,10 +202,11 @@ class Function:
         self.call = call
 
     def __repr__(self) -> str:
-        params_msg = ', '.join(self.params)
+        parts = list(self.params)
         if self.variadic:
-            params_msg += ', ...'
-        return f"{self.name}({params_msg})"
+            parts.append('...')
+        msg = ', '.join(parts)
+        return f"{self.name}({msg})"
 
     def __call__(self, *args) -> Value:
         return self.call(self, *args)
@@ -437,6 +480,12 @@ class BaseMemoryBlock:
     def __getitem__(self, index: int) -> Value: ...
     def copy(self) -> 'BaseMemoryBlock': ...
 
+    def update(self, entries: Iterable[tuple[int, Value]]):
+        # NOTE: subclasses may wish to override this method with a more
+        # performant implementation
+        for index, value in entries:
+            self[index] = value
+
     def free(self):
         if self.freed:
             raise Exception(f"Attempted to free already-freed memory: {self!r}")
@@ -446,13 +495,42 @@ class BaseMemoryBlock:
 
 class SequenceBackedMemoryBlock(BaseMemoryBlock):
     """Behaves like a block of memory in C, i.e. an array of objects.
-    Is backed by any Python object which behaves like a Sequence[Value]."""
+    Is backed by any Python object which behaves like a Sequence[Value].
+
+        >>> mem = SequenceBackedMemoryBlock([10, 20, 30])
+        >>> mem
+        SequenceBackedMemoryBlock(0..3, fixed=True)
+        >>> mem[1]
+        20
+
+        NOTE: strings automatically get a NUL byte appended to them
+        >>> mem = SequenceBackedMemoryBlock('abc')
+        >>> mem
+        SequenceBackedMemoryBlock(0..4, fixed=True)
+        >>> mem[1]
+        98
+        >>> mem[3] # NUL byte!
+        0
+
+    """
 
     min_index = 0
 
     def __init__(self, data: Sequence[Value]):
         super().__init__()
-        self.data = data
+        if isinstance(data, str):
+            # Make sure the elements of self.data are integers, i.e. C chars
+            data = data.encode()
+            if not data.endswith(b'\0'):
+                data += b'\0'
+            self.data = tuple(data)
+        elif isinstance(data, bytes):
+            # Make sure the elements of self.data are integers, i.e. C chars
+            if not data.endswith(b'\0'):
+                data += b'\0'
+            self.data = tuple(data)
+        else:
+            self.data = data
 
     def size(self) -> Optional[int]:
         return len(self.data)
@@ -507,6 +585,15 @@ class MemoryBlock(BaseMemoryBlock):
         else:
             self.min_index = self.max_index = 0
 
+    @staticmethod
+    def from_sequence(data: Sequence[Value]) -> 'MemoryBlock':
+        # NOTE: we don't do size=len(data), because e.g. we want to use
+        # this for initializers, like `char s[20] = "Hi"`, where the
+        # initializer may contain less data than the array.
+        self = MemoryBlock()
+        self.update(enumerate(data))
+        return self
+
     def copy(self) -> 'MemoryBlock':
         copy = MemoryBlock(size=self.size)
         for index, value in self.entries.items():
@@ -538,12 +625,28 @@ class MemoryBlock(BaseMemoryBlock):
     def __contains__(self, index: int) -> bool:
         return index in self.entries
 
+    def _check_index(self, index: int):
+        # NOTE: assumes self.size is not None
+        if index < 0:
+            raise SegmentationFault(f"Index {index} < 0")
+        elif index >= self.size:
+            raise SegmentationFault(f"Index {index} >= {self.size}")
+
+    def update(self, entries: Iterable[tuple[int, Value]]):
+        should_check_indexes = self.size is not None
+        should_update = False
+        for index, value in entries:
+            if should_check_indexes:
+                self._check_index(index)
+            should_update = index not in self.entries
+            self.entries[index] = value
+        if should_update:
+            # We may have new min/max indexes, so update them
+            self._update_indexes(index)
+
     def __setitem__(self, index: int, value: Value):
         if self.size is not None:
-            if index < 0:
-                raise SegmentationFault(f"Index {index} < 0")
-            elif index >= self.size:
-                raise SegmentationFault(f"Index {index} >= {self.size}")
+            self._check_index(index)
         should_update = index not in self.entries
         self.entries[index] = value
         if should_update:

@@ -205,6 +205,23 @@
 
     [X] Parsing this fails: `int atexit(void (*)(void));`
 
+    [X] I don't think we can reasonably allow getting the index of an arbitrary
+        Python object... e.g. getting the index of a string returns a string,
+        which is almost certainly not what you want:
+
+            In [2]: mini.eval('"abc"[1]')
+            Out[2]: 'b'
+
+            In [3]: mini.eval('char c = "abc"[1];')
+            Out[3]: {'c': Pointer(0..0)}
+
+        Soooooo what do we do?..
+        Do we need a "coerce_to_value" function which coerces arbitrary Python
+        objects to "C values"?.. that's basically what we have with
+        copy_value right now, which e.g. coerces str to Pointer.
+
+        ...for now, added value_as_pointer, used it in the handlers for [...]
+
     [ ] Better run-time error messages!..
         But see also the TODO about better parsing error messages, which might
         be good to do first...
