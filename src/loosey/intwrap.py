@@ -1,11 +1,12 @@
 
 
-# NOTE: I copy-pasted this metaclass from:
+# NOTE: I originally copy-pasted this metaclass from:
 # https://blag.nullteilerfrei.de/2020/06/28/wrapping-integers-in-python-with-metaclassing/
-# ...thanks, mystery Internet person!
+# ...and then tweaked it a bit.
+# Thanks, mystery Internet person!
 # - BAG, 2026
-class uint_meta(type):
-    def __new__(cls, name, bases, nmspc, mod=None, bits=None, hexrep=False, signed=False):
+class wrapped_int_meta(type):
+    def __new__(cls, name, bases, nmspc, mod=None, bits=None, hexrep=False, signed=False, is_char=False):
         assert int in bases[0].__mro__
         if None not in (mod, bits) and 1 << bits != mod:
             raise ValueError('incompatible mod and bits argument.')
@@ -20,7 +21,7 @@ class uint_meta(type):
             nmspc['__pow__'] = lambda self, them, op=int.__pow__: self.__class__(op(self, them, mod))
             nmspc['__inv__'] = lambda self, op=int.__invert__: self.__class__(op(self))
             nmspc['__neg__'] = lambda self, op=int.__neg__: self.__class__(op(self))
-            nmspc.update(mod=mod, signed=signed)
+            nmspc.update(mod=mod, signed=signed, is_char=is_char)
             if hexrep is True:
                 nib, up = divmod((mod.bit_length() - 1) - 1, 4)
                 nib += bool(up)
@@ -33,15 +34,58 @@ class uint_meta(type):
             if cls.signed and (value & (cls.mod >> 1)):
                 value -= cls.mod
             return type.__call__(cls, value)
+        if cls.is_char:
+            if isinstance(value, bytes):
+                value = int.from_bytes(value)
+            elif isinstance(value, str):
+                value = int.from_bytes(value.encode())
         return cls(int(value, *args, **kwargs))
 
 
-class u8(int, metaclass=uint_meta, bits=8): ...
-class u16(int, metaclass=uint_meta, bits=16): ...
-class u32(int, metaclass=uint_meta, bits=32): ...
-class u64(int, metaclass=uint_meta, bits=64): ...
+class wrapped_int_base(int, metaclass=wrapped_int_meta):
+    """
 
-class i8(int, metaclass=uint_meta, bits=8, signed=True): ...
-class i16(int, metaclass=uint_meta, bits=16, signed=True): ...
-class i32(int, metaclass=uint_meta, bits=32, signed=True): ...
-class i64(int, metaclass=uint_meta, bits=64, signed=True): ...
+        >>> u8()
+        u8(0)
+        >>> u8() - 1
+        u8(255)
+
+        >>> i8()
+        i8(0)
+        >>> i8() - 1
+        i8(-1)
+
+        >>> i8(127)
+        i8(127)
+        >>> i8(128)
+        i8(-128)
+
+    """
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({int(self)})'
+
+
+class u8(wrapped_int_base, bits=8): ...
+class u16(wrapped_int_base, bits=16): ...
+class u32(wrapped_int_base, bits=32): ...
+class u64(wrapped_int_base, bits=64): ...
+
+class i8(wrapped_int_base, bits=8, signed=True): ...
+class i16(wrapped_int_base, bits=16, signed=True): ...
+class i32(wrapped_int_base, bits=32, signed=True): ...
+class i64(wrapped_int_base, bits=64, signed=True): ...
+
+class char(wrapped_int_base, bits=8, is_char=True):
+    """
+
+        >>> char(65)
+        char(b'A')
+
+        >>> char('0') + 3
+        char(b'3')
+
+    """
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({self.to_bytes()})'
