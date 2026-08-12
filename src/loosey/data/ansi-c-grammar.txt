@@ -385,6 +385,10 @@ jump_statement
     ;
 
 function_definition
+    # NOTE: the declaration_list is for K&R C function style, e.g.
+    #
+    #   int add(x, y) int x; int y; { ... }
+    #
     | ( declaration_specifiers )? declarator ( declaration_list )? compound_statement
     ;
 

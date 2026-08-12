@@ -236,12 +236,26 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.pattern_callbacks = {
             ('compound_statement', 'block'):
                 (self.enter_typedef_block, self.exit_typedef_block),
+            ('selection_statement', 'if'):
+                (self.enter_typedef_block, self.exit_typedef_block),
+            ('selection_statement', 'switch'):
+                (self.enter_typedef_block, self.exit_typedef_block),
+            ('iteration_statement', 'while'):
+                (self.enter_typedef_block, self.exit_typedef_block),
+            ('iteration_statement', 'for'):
+                (self.enter_typedef_block, self.exit_typedef_block),
+            ('iteration_statement', 'do'):
+                (self.enter_typedef_block, self.exit_typedef_block),
             ('declaration', 'decl'):
                 (None, self.exit_declaration),
         }
         for rule_name, pattern_name in self.pattern_callbacks:
             if rule_name not in self.grammar_rules:
                 raise Exception(f"Unknown rule name: {rule_name}")
+            if pattern_name and not any(pattern.name == pattern_name
+                for pattern in self.grammar_rules[rule_name].patterns
+            ):
+                raise Exception(f"Unknown pattern name for rule {rule_name}: {pattern_name}")
         self.toktype_predicates = {
             'TYPE_NAME': self.is_type_name_token,
         }
@@ -656,30 +670,35 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
             >>> mini = MiniC()
 
-            >>> mini.eval('struct T', 'struct_or_union_specifier').pprint()
+            >>> def test(text):
+            ...     mini.eval(text, 'struct_or_union_specifier').pprint()
+
+            >>> test('struct T')
             struct T:
 
-            >>> mini.eval('struct { int x; }', 'struct_or_union_specifier').pprint()
+            >>> test('struct { int x; }')
             struct:
               x
 
-            >>> mini.eval('struct T { int x; }', 'struct_or_union_specifier').pprint()
+            >>> test('struct T { int x; }')
             struct T:
               x
 
-            >>> mini.eval('struct { const int x, y; int data[]; }',
-            ...     'struct_or_union_specifier').pprint()
+            >>> test('struct { const int x, y; int data[]; }')
             struct:
               const x, y
               data(array)
 
             Bitfields are supported:
-            >>> mini.eval('struct { int x, flag:2, :4, y; }',
-            ...     'struct_or_union_specifier').pprint()
+            >>> test('struct { int x, flag:2, :4, y; }')
             struct:
               x, flag(bitfield), y
 
         """
+        if isinstance(match, str):
+            match = self.parse(match, 'struct_or_union_specifier')
+        else:
+            assert match.rule_name == 'struct_or_union_specifier', match
 
         kind = match.children[0].token.value # 'struct' or 'union'
 
@@ -1209,112 +1228,117 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         return value
 
     def on_if__selection_statement(self, match: ParseMatch):
-        cond_value = self.on(match.children[0])
-        if value_as_bool(cond_value):
-            self.on(match.children[1])
-        elif len(match.children) >= 3:
-            else_branch = match.children[2]
-            assert else_branch.rule_name == 'else_statement'
-            self.on(else_branch.children[0])
+        with self.new_scope() as scope:
+            cond_value = self.on(match.children[0])
+            if value_as_bool(cond_value):
+                self.on(match.children[1])
+            elif len(match.children) >= 3:
+                else_branch = match.children[2]
+                assert else_branch.rule_name == 'else_statement'
+                self.on(else_branch.children[0])
 
     def on_switch__selection_statement(self, match: ParseMatch):
-        value_match = match.children[0]
-        body = match.children[1:]
+        with self.new_scope() as scope:
+            value_match = match.children[0]
+            body = match.children[1:]
 
-        # Collect the switch cases and default
-        case_matches = []
-        default_match = None
-        for child in body:
-            if child.pattern_name == 'case':
-                case_matches.append(child)
-            elif child.pattern_name == 'default':
-                if default_match is not None:
-                    raise ParseError(child.token, "Multiple defaults for a single switch!")
-                default_match = child
+            # Collect the switch cases and default
+            case_matches = []
+            default_match = None
+            for child in body:
+                if child.pattern_name == 'case':
+                    case_matches.append(child)
+                elif child.pattern_name == 'default':
+                    if default_match is not None:
+                        raise ParseError(child.token, "Multiple defaults for a single switch!")
+                    default_match = child
 
-        value = self.on(value_match)
+            value = self.on(value_match)
 
-        # Find a case_match, which is either one of the case_matches, or the
-        # default_match, or None
-        for case_match in case_matches:
-            case_value = self.on(case_match.children[0])
-            if case_value == value:
-                break
-        else:
-            case_match = default_match
+            # Find a case_match, which is either one of the case_matches, or the
+            # default_match, or None
+            for case_match in case_matches:
+                case_value = self.on(case_match.children[0])
+                if case_value == value:
+                    break
+            else:
+                case_match = default_match
 
-        if case_match is None:
-            # We didn't match any of the cases, and we don't have a default
-            return
+            if case_match is None:
+                # We didn't match any of the cases, and we don't have a default
+                return
 
-        # Now evaluate all statements in the switch body from case_match
-        # onwards:
-        case_index = body.index(case_match)
-        try:
-            for child in body[case_index:]:
-                if child.pattern_name in ('case', 'default'):
-                    self.on(child.children[-1])
-                else:
-                    self.on(child)
-        except Break:
-            pass
+            # Now evaluate all statements in the switch body from case_match
+            # onwards:
+            case_index = body.index(case_match)
+            try:
+                for child in body[case_index:]:
+                    if child.pattern_name in ('case', 'default'):
+                        self.on(child.children[-1])
+                    else:
+                        self.on(child)
+            except Break:
+                pass
 
     def on_while__iteration_statement(self, match: ParseMatch):
-        cond_match, body_match = match.children
-        while True:
-            cond_value = self.on(cond_match)
-            if not value_as_bool(cond_value):
-                break
-            try:
-                self.on(body_match)
-            except Continue:
-                pass
-            except Break:
-                break
+        with self.new_scope() as scope:
+            cond_match, body_match = match.children
+            while True:
+                cond_value = self.on(cond_match)
+                if not value_as_bool(cond_value):
+                    break
+                try:
+                    self.on(body_match)
+                except Continue:
+                    pass
+                except Break:
+                    break
 
     def on_do__iteration_statement(self, match: ParseMatch):
-        body_match, cond_match = match.children
-        while True:
-            try:
-                self.on(body_match)
-            except Continue:
-                pass
-            except Break:
-                break
-            cond_value = self.on(cond_match)
-            if not value_as_bool(cond_value):
-                break
+        with self.new_scope() as scope:
+            body_match, cond_match = match.children
+            while True:
+                try:
+                    self.on(body_match)
+                except Continue:
+                    pass
+                except Break:
+                    break
+                cond_value = self.on(cond_match)
+                if not value_as_bool(cond_value):
+                    break
 
     def on_empty_expression_statement(self, match: ParseMatch):
         return None
 
     def on_for__iteration_statement(self, match: ParseMatch):
-        if len(match.children) == 4:
-            init_match, cond_match, extra_match, body_match = match.children
-        elif len(match.children) == 3:
-            init_match, cond_match, body_match = match.children
-            extra_match = None
-        else:
-            # Should never happen
-            raise Exception(f"For-loop with unexpected number of children: {match}")
+        with self.new_scope() as scope:
+            if len(match.children) == 4:
+                init_match, cond_match, extra_match, body_match = match.children
+            elif len(match.children) == 3:
+                init_match, cond_match, body_match = match.children
+                extra_match = None
+            else:
+                # Should never happen
+                raise Exception(f"For-loop with unexpected number of children: {match}")
 
-        if cond_match.rule_name == 'empty_expression_statement':
-            cond_match = None
+            if cond_match.rule_name == 'empty_expression_statement':
+                cond_match = None
 
-        self.on(init_match)
-        while True:
-            if cond_match is not None:
-                cond_value = self.on(cond_match)
-                if not value_as_bool(cond_value):
+            self.on(init_match)
+            while True:
+                if cond_match is not None:
+                    cond_value = self.on(cond_match)
+                    if not value_as_bool(cond_value):
+                        break
+                try:
+                    self.on(body_match)
+                except Continue:
+                    pass
+                except Break:
                     break
-            try:
-                self.on(body_match)
-            except Continue:
-                pass
-            except Break:
-                break
-            if extra_match is not None:
-                self.on(extra_match)
+                if extra_match is not None:
+                    self.on(extra_match)
 
     def on_repl_commands(self, match: ParseMatch) -> Value:
         last_child = match.children[-1]
