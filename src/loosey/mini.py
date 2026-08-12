@@ -44,6 +44,8 @@ NO_DEFAULT = object()
 
 GRAMMAR_FILENAME = get_data_filepath('ansi-c-grammar.txt')
 
+Initializer = Value | list['Initializer']
+
 
 # Maps rule names to operators
 # NOTE: only lists rules which correspond to a single operator.
@@ -814,7 +816,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     if is_initializer_list:
                         # E.g. `= {0}`, `= {1, 2}`, `= {{1, 2}, {3, 4}}`, etc
                         if is_array:
-                            value = copy_value(self.on(initializer), initializer=True)
+                            value = self.initializer_as_value(self.on(initializer))
+                            value = copy_value(value, initializer=True)
                         else:
                             # TODO: implement struct initialization lists...
                             # HACK: for now, we just make sure `= {0}` works
@@ -879,14 +882,16 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             return value
 
-    def on_initializer_list__initializer(self, match: ParseMatch) -> Value:
-        values = []
-        for child in match.children:
-            values.append(self.on(child))
-        mem = MemoryBlock()
-        for i, value in enumerate(values):
-            mem[i] = value
-        return Pointer(mem)
+    def on_initializer_list__initializer(self, match: ParseMatch) -> list[Initializer]:
+        return [self.on(child) for child in match.children]
+
+    def initializer_as_value(self, initializer: Initializer) -> Value:
+        if isinstance(initializer, list):
+            mem = MemoryBlock()
+            mem.update(enumerate(map(self.initializer_as_value, initializer)))
+            return Pointer(mem)
+        else:
+            return initializer
 
     def on_unary_expression(self, match: ParseMatch) -> Value:
         op = match.children[0].token.value
