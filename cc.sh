@@ -4,8 +4,16 @@
 #
 set -euo pipefail
 
+newline='
+'
+
 code="$1"
 shift
+while test "$#" -ge 1
+do
+    code="$code$newline$1"
+    shift
+done
 
 fullcode="
 #include <stdio.h>
