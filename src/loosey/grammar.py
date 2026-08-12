@@ -1,3 +1,4 @@
+
 import re
 import os
 import sys
@@ -115,6 +116,7 @@ class GrammarParseError(Exception):
     pass
 
 
+@lru_cache
 def parse_rules_from_file(filename: str) -> dict[str, GrammarRule]:
     return parse_rules(open(filename, 'r').read(), filename)
 

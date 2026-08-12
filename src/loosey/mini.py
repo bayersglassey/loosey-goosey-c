@@ -17,6 +17,7 @@ from loosey.runtime import (
     Declaration,
     Declarator,
     InitDeclarator,
+    CTagged,
     CStructlike,
     CEnum,
     Function,
@@ -119,13 +120,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
           decl: declaration
             declspec: declaration_specifiers
               typedef
-              int
+              builtin: int
             decl: init_declarator
               decl: declarator
                 declare: Integer
           decl: declaration
             declspec: declaration_specifiers
-              Integer
+              typedef: Integer
             decl: init_declarator
               decl: declarator
                 pointer: *
@@ -143,7 +144,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         >>> mini.parse('T *x;').pprint()
         decl: declaration
           declspec: declaration_specifiers
-            T
+            typedef: T
           decl: init_declarator
             decl: declarator
               pointer: *
@@ -265,6 +266,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         self.parsed_declarators: dict[str, Declarator] = {}
         self.parsed_declarations: dict[str, Declaration] = {}
+        self.parsed_structlikes: dict[str, CStructlike] = {}
 
     def parse(self, *args, **kwargs):
         block = set()
@@ -391,15 +393,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             scope[name] = Pointer(value)
 
-    def declare_tagged(self, tag: str, value: Value):
+    def declare_tagged(self, tagged: CTagged):
         # Struct/union/enum tags use the same scoping mechanism as everything
         # else, but have a different "namespace".
         # We implement this by reusing our exising scopes, but using a 'tag:'
         # prefix to turn tags into "identifiers" which don't clash with real
         # identifiers.
-        self.declare_var('tag:' + tag, value)
+        self.declare_var('tag:' + tagged.tag, tagged)
 
-    def get_tagged(self, tag: str, default=NO_DEFAULT) -> Value:
+    def get_tagged(self, tag: str, default=NO_DEFAULT) -> CTagged:
         return self.get_var('tag:' + tag, default)
 
     def parse_declarator(self, match: ParseMatch) -> Declarator:
@@ -625,6 +627,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             >>> mini.eval('enum T', 'enum_specifier').pprint()
             enum T:
 
+            Evaluating an enum specifier also declares it in the tag namespace:
+            >>> mini.get_tagged('T').pprint()
+            enum T:
+
             >>> mini.eval('enum { x }', 'enum_specifier').pprint()
             enum:
               x = 0
@@ -683,16 +689,42 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         enum = CEnum(tag, values)
         if tag is not None:
-            self.declare_tagged(tag, enum)
+            self.declare_tagged(enum)
         return enum
 
     def on_struct_or_union_specifier(self, match: ParseMatch) -> CStructlike:
         """
 
+            Evaluating a struct or union specifier also declares it in the tag
+            namespace:
+            >>> mini = MiniC()
+            >>> T = mini.eval('struct T { int x; }', 'struct_or_union_specifier')
+            >>> mini.get_tagged('T') is T
+            True
+
+        """
+        # NOTE: assumes match is of the correct rule name
+        structlike = self.parse_structlike(match)
+        if structlike.tag is not None:
+            self.declare_tagged(structlike)
+        return structlike
+
+    def parse_structlike(self, match: ParseMatch) -> CStructlike:
+        key = match.unique_id
+        structlike = self.parsed_structlikes.get(key)
+        if structlike is None:
+            structlike = self._parse_structlike(match)
+            self.parsed_structlikes[key] = structlike
+        return structlike
+
+    def _parse_structlike(self, match: ParseMatch) -> CStructlike:
+        """
+
             >>> mini = MiniC()
 
             >>> def test(text):
-            ...     mini.eval(text, 'struct_or_union_specifier').pprint()
+            ...     match = mini.parse(text, 'struct_or_union_specifier')
+            ...     mini.parse_structlike(match).pprint()
 
             >>> test('struct T')
             struct T:
@@ -733,14 +765,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         for child in fields:
             declarations.append(self.parse_declaration(child))
 
-        struct = CStructlike(
+        return CStructlike(
             kind=kind,
             tag=tag,
             field_declarations=declarations,
         )
-        if tag is not None:
-            self.declare_tagged(tag, struct)
-        return struct
 
     def on_declaration_list(self, match: ParseMatch) -> dict[str, Value]:
         intialized_values = {}
@@ -884,6 +913,62 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
     def on_initializer_list__initializer(self, match: ParseMatch) -> list[Initializer]:
         return [self.on(child) for child in match.children]
+
+    def convert_initializer(
+            self,
+            declaration: Declaration,
+            declarator: Declarator,
+            initializer: Initializer,
+            ) -> Value:
+        """Figures out what the value of an initializer is.
+        That wouldn't be a hard problem... except when we need to match
+        initializer list elements onto struct fields!..
+
+            >>> mini = MiniC()
+
+            >>> mini.eval(
+            ...     'typedef struct T { int x, xx[2]; } T;'
+            ...     'typedef struct Y { struct T t; T tt[2]; } Y;'
+            ...     'typedef Y YY[];'
+            ... )
+            >>> declaration = mini.parse_declaration(mini.parse(
+            ...     # array of array of Y
+            ...     '''YY yy[] = {{{
+            ...         {1, {2, 3}}, // .t
+            ...         {{4, {5, 6}}, {7, {8, 9}}} // .tt
+            ...     }}};'''))
+            >>> declarator, initializer = declaration.init_declarators[0]
+            >>> initializer = mini.on(initializer)
+            >>> value = mini.convert_initializer(declaration, declarator, initializer)
+
+            ...TODO
+
+        """
+
+        # TODO: finish this!..
+
+        if not isinstance(initializer, list):
+            # Initializer is already a value, just use it as-is
+            return initializer
+
+        if declarator.kind == 'array':
+            # Convert initializer list into an array value, i.e. a pointer
+            # to an initialized block of memory
+            mem = MemoryBlock()
+            mem.update(enumerate(map(self.initializer_as_value, initializer)))
+            return Pointer(mem)
+
+        typedef_match = declaration.declspec.find('typedef:')
+        typedef = typedef_match and self.get_var(typedef_match.token.value)
+
+        # Figure out whether we're dealing with an underlying struct/union type
+        structlike_match = declaration.declspec.find('struct_or_union_specifier')
+        if not structlike_match:
+            return initializer
+
+        structlike = self.parse_structlike(structlike_match)
+        if not structlike.field_declarations:
+            structlike = self.get_tagged(structlike.tag)
 
     def initializer_as_value(self, initializer: Initializer) -> Value:
         if isinstance(initializer, list):

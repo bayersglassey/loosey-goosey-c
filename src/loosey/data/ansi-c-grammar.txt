@@ -146,10 +146,10 @@ storage_class_specifier
     ;
 
 type_specifier
-    | [ 'void' 'char' 'short' 'int' 'long' 'float' 'double' 'signed' 'unsigned' '_Bool' ]
-    | struct_or_union_specifier
-    | enum_specifier
-    | TYPE_NAME
+    | builtin: [ 'void' 'char' 'short' 'int' 'long' 'float' 'double' 'signed' 'unsigned' '_Bool' ]
+    | struct:  struct_or_union_specifier
+    | enum:    enum_specifier
+    | typedef: TYPE_NAME
     ;
 
 type_qualifier
