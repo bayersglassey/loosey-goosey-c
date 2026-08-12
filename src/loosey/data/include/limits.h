@@ -1,0 +1,48 @@
+#ifndef __LOOSEY_LIMITS__
+#define __LOOSEY_LIMITS__
+
+#include <__stdint_limits__.h> // UINT8_WIDTH, etc
+
+// This file is heavily based off on https://en.cppreference.com/c/header/limits
+
+#define CHAR_BIT UINT8_WIDTH
+#define CHAR_WIDTH UINT8_WIDTH
+#define CHAR_MIN UINT8_MIN
+#define CHAR_MAX UINT8_MAX
+
+#define SCHAR_WIDTH INT8_WIDTH
+#define SCHAR_MIN INT8_MIN
+#define SCHAR_MAX INT8_MAX
+
+#define SHRT_WIDTH INT16_WIDTH
+#define SHRT_MIN INT16_MIN
+#define SHRT_MAX INT16_MAX
+
+#define INT_WIDTH INT32_WIDTH
+#define INT_MIN INT32_MIN
+#define INT_MAX INT32_MAX
+
+#define LONG_WIDTH INT64_WIDTH
+#define LONG_MIN INT64_MIN
+#define LONG_MAX INT64_MAX
+
+#define LLONG_WIDTH INT64_WIDTH
+#define LLONG_MIN INT64_MIN
+#define LLONG_MAX INT64_MAX
+
+#define UCHAR_WIDTH UINT8_WIDTH
+#define UCHAR_MAX UINT8_MAX
+
+#define USHRT_WIDTH UINT16_WIDTH
+#define USHRT_MAX UINT16_MAX
+
+#define UINT_WIDTH UINT32_WIDTH
+#define UINT_MAX UINT32_MAX
+
+#define ULONG_WIDTH UINT64_WIDTH
+#define ULONG_MAX UINT64_MAX
+
+#define ULLONG_WIDTH UINT64_WIDTH
+#define ULLONG_MAX UINT64_MAX
+
+#endif

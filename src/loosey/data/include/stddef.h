@@ -3,8 +3,8 @@
 
 // This file is heavily based on: https://en.cppreference.com/c/header/stddef
 
-typedef int ptrdiff_t;
-typedef unsigned size_t;
+typedef long ptrdiff_t;
+typedef unsigned long size_t;
 
 #define NULL 0
 
