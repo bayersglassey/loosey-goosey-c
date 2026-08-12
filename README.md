@@ -302,4 +302,5 @@ while reading his excellent articles such as "Regular Expression Matching Can
 Be Simple And Fast":
 * https://swtch.com/~rsc/regexp/regexp1.html
 
-All I did to the file was to change `CHAR_MAX` to `SCHAR_MAX` and add doctests!
+Pretty much all I did to the file was to change tabs to spaces, fix compile()
+to avoid undefined involving `++`, and add doctests!

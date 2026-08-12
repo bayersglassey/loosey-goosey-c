@@ -229,6 +229,12 @@ class CStructlike(CTagged):
         super().__init__(kind, tag)
         self.field_declarations = field_declarations
 
+    @property
+    def field_names(self) -> list[str]:
+        return [declarator.name
+            for declaration in self.field_declarations
+            for declarator in declaration.init_declarators]
+
     def pprint(self):
         msg = self.kind
         if self.tag is not None:

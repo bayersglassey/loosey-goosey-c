@@ -627,10 +627,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             >>> mini.eval('enum T', 'enum_specifier').pprint()
             enum T:
 
-            Evaluating an enum specifier also declares it in the tag namespace:
-            >>> mini.get_tagged('T').pprint()
-            enum T:
-
             >>> mini.eval('enum { x }', 'enum_specifier').pprint()
             enum:
               x = 0
@@ -640,6 +636,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
               x = 0
               y = 2
               z = 3
+
+            Evaluating an enum specifier also declares it in the tag namespace,
+            and adds its values to the current scope:
+            >>> mini.get_tagged('T').values['y']
+            2
+            >>> mini.get_var('y')
+            2
 
         """
 
@@ -809,6 +812,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             4
             >>> mini.eval('data[1]')
             Pointer(0..1)
+
+            Evaluating a declaration causes any struct, union, and enum
+            declarations within it to be evaluated as well:
+            >>> mini.eval('struct T { int x; };')
+            {}
+            >>> mini.get_tagged('T').field_names
+            ['x']
+            >>> mini.eval('enum E { x, y };')
+            {}
+            >>> mini.get_tagged('E').values
+            {'x': 0, 'y': 1}
 
         """
         intialized_values = {}

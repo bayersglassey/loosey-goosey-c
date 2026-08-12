@@ -32,47 +32,50 @@ enum    {
     JUMP,
     MATCH,
     BRANCH,
-    LPAREN = SCHAR_MAX + 1,
+    LPAREN = CHAR_MAX + 1,
     RPAREN,     /* This should  */
     ALTERN,     /* reflect the  */
     CONCAT,     /* precedence   */
     KLEENE      /* rules!   */
 };
 
-/*
+const char *op_name[] = {"STOP  ", "JUMP  ", "MATCH ", "BRANCH"};
+const char *postfix_name[] = {"LPAREN", "RPAREN", "ALTERN", "CONCAT", "KLEENE"};
+
+
+/* prepare(): converts special characters to enum values, and handles escaping
 
     >>> from loosey.mini import MiniC; mini = MiniC()
     >>> mini.eval_file('examples/regexp-bytecode.c')
     main()
 
-    >>> result = mini.eval('prepare("a(b|c)*d")')
-    >>> result.as_c_string()
-    b'a\x82b\x84c\x83\x86\x85d\x83'
-
-    What's with the strange '\x' bytes?.. they correspond to enum values
-    defined with values greater than the valid range for ASCII:
-    >>> special_chars = {mini.eval(name): name
-    ...     for name in ('LPAREN', 'RPAREN', 'ALTERN', 'CONCAT', 'KLEENE')}
-    >>> for x in result.as_c_string():
-    ...     print(special_chars[x] if x in special_chars else repr(chr(x)))
-    'a'
-    LPAREN
-    'b'
-    ALTERN
-    'c'
-    RPAREN
-    KLEENE
-    CONCAT
-    'd'
-    RPAREN
+    >>> mini.eval('dump_prepared(prepare("a(b|c|\\n)*d"))')
+     0: 'a'
+     1: LPAREN
+     2: 'b'
+     3: ALTERN
+     4: 'c'
+     5: ALTERN
+     6: '
+    '
+     7: RPAREN
+     8: KLEENE
+     9: CONCAT
+    10: 'd'
+    11: RPAREN
 
     ...note the trailing RPAREN, which corresponds to end-of-pattern, not
     to a ')' in the input.
 
+    Also note that there is only one CONCAT, corresponding to the
+    concatenation of "a(b|c|\\n)*" and "d"; there is none corresponding to
+    the concatenation of "a" and "(b|c|\\n)*".
+    This is because concatenation is implicit whenever a '(' is encountered.
+
 */
 unsigned char *prepare (const char *src)
 {
-    unsigned char   escape[SCHAR_MAX + 1] = "";
+    unsigned char   escape[CHAR_MAX + 1] = "";
     unsigned char   *dest = malloc (2 * (strlen (src) + 1));
     int c, i, j = 0, concat = 0, nparen = 0;
 
@@ -126,31 +129,41 @@ unsigned char *prepare (const char *src)
     return  dest;
 }
 
-/*
+void dump_prepared(const unsigned char *src)
+{
+    int i, c;
+    for (i = 0; (c = src[i]); i++) {
+        if (c >= LPAREN) {
+            printf ("%2d: %s\n", i, postfix_name[c - LPAREN]);
+        } else {
+            printf ("%2d: '%c'\n", i, c);
+        }
+    }
+}
+
+
+/* convert(): converts a regex into a reverse-Polish representation
 
     >>> from loosey.mini import MiniC; mini = MiniC()
     >>> mini.eval_file('examples/regexp-bytecode.c')
     main()
 
-    >>> result = mini.eval('convert("a(b|c)*d")')
-    >>> result.as_c_string()
-    b'abc\x84\x86d\x85'
+    >>> mini.eval('dump_prepared(convert("a(b|c)*d"))')
+     0: 'a'
+     1: 'b'
+     2: 'c'
+     3: ALTERN
+     4: KLEENE
+     5: 'd'
+     6: CONCAT
 
-    See the doctest for prepare() for an explanation of the following:
-    >>> special_chars = {mini.eval(name): name
-    ...     for name in ('LPAREN', 'RPAREN', 'ALTERN', 'CONCAT', 'KLEENE')}
-    >>> for x in result.as_c_string():
-    ...     print(special_chars[x] if x in special_chars else repr(chr(x)))
-    'a'
-    'b'
-    'c'
-    ALTERN
-    KLEENE
-    'd'
-    CONCAT
+    ...note the reverse-Polish (i.e. postfix operator) notation, e.g. "(b|c)"
+    has become the sequence 'b', 'c', ALTERN.
 
-    ...note that the output of prepare() has been converted to reverse
-    Polish notation, e.g. '(b|c)' has become the sequence 'b', 'c', ALTERN.
+    Also note the single CONCAT, despite the regex being composed of 3
+    concatenated sub-regexes: "a", "(b|c)*", "d"
+    This is because concatenation is implicit whenever a '(' is encountered.
+    See also: prepare()
 
 */
 unsigned char *convert (const char *src)
@@ -227,55 +240,51 @@ size_t memlen (const unsigned char *s)
     which produces a reverse-Polish (i.e. all operators are postfix) encoding
     of its input.
     The output of compile() is an array of compiled instructions:
-    >>> result = mini.eval('compile(convert("a(b|c)*d"))')
-    >>> for i, instr in result.items():
+    >>> code = mini.eval('compile(convert("a(b|c)*d"))')
+    >>> for i, instr in code.items():
     ...     print(instr)
-    Struct({'operand': 1, 'address': 2})
+    Struct({'operand': 1, 'address': 1})
     Struct({'operand': 2, 'address': 97})
     Struct({'operand': 1, 'address': 10})
     Struct({'operand': 2, 'address': 98})
     Struct({'operand': 1, 'address': 10})
     Struct({'operand': 2, 'address': 99})
-    Struct({'operand': 1, 'address': 11})
+    Struct({'operand': 1, 'address': 10})
     Struct({'operand': 3, 'address': 124})
-    Struct({'operand': 1, 'address': 6})
-    Struct({'operand': 1, 'address': 4})
+    Struct({'operand': 1, 'address': 5})
+    Struct({'operand': 1, 'address': 3})
     Struct({'operand': 3, 'address': 42})
     Struct({'operand': 1, 'address': 7})
-    Struct({'operand': 1, 'address': 14})
+    Struct({'operand': 1, 'address': 13})
     Struct({'operand': 2, 'address': 100})
-    Struct({'operand': 0, 'address': 15})
+    Struct({'operand': 0, 'address': 14})
 
     The operands are enum values, and the "addresses" have a different
-    meaning for each operand:
-    >>> OPERANDS = {mini.eval(name): name
-    ...     for name in ('STOP', 'JUMP', 'MATCH', 'BRANCH')}
-    >>> for i, instr in result.items():
-    ...     op = OPERANDS[instr['operand']]
-    ...     addr = instr['address']
-    ...     print(op, addr if op in ('JUMP', 'STOP') else chr(addr))
-    JUMP 2
-    MATCH a
-    JUMP 10
-    MATCH b
-    JUMP 10
-    MATCH c
-    JUMP 11
-    BRANCH |
-    JUMP 6
-    JUMP 4
-    BRANCH *
-    JUMP 7
-    JUMP 14
-    MATCH d
-    STOP 15
+    meaning for each operand.
+    There is a helper function, dump_code(), which produces a human-readable
+    representation of the code:
+    >>> mini.get_var('dump_code')(code)
+     0: JUMP      1
+     1: MATCH   'a'
+     2: JUMP     10
+     3: MATCH   'b'
+     4: JUMP     10
+     5: MATCH   'c'
+     6: JUMP     10
+     7: BRANCH  '|'
+     8: JUMP      5
+     9: JUMP      3
+    10: BRANCH  '*'
+    11: JUMP      7
+    12: JUMP     13
+    13: MATCH   'd'
 
 */
 struct instr *compile (const unsigned char *src)
 {
     int i, c, pc = 0, top = 0;
     int stack[BUFSIZ];
-    struct  instr   *code = malloc (5 * memlen (src) * sizeof *code / 2);
+    struct  instr   instr, *code = malloc (5 * memlen (src) * sizeof *code / 2);
 
     for (i = 0; (c = src[i]); i++) {
 
@@ -283,7 +292,8 @@ struct instr *compile (const unsigned char *src)
 
             default:
                 stack[top++] = pc;
-                code[pc++] = assemble (JUMP, pc + 1);
+                instr = assemble (JUMP, pc + 1);
+                code[pc++] = instr;
                 code[pc++] = assemble (MATCH, c);
                 break;
 
@@ -298,7 +308,8 @@ struct instr *compile (const unsigned char *src)
                 break;
 
             case ALTERN:
-                code[pc++] = assemble (JUMP, pc + 4);
+                instr = assemble (JUMP, pc + 4);
+                code[pc++] = instr;
                 code[pc++] = assemble (BRANCH, '|');
                 code[pc++] = code[stack[top - 1]];
                 code[pc++] = code[stack[top - 2]];
@@ -311,7 +322,8 @@ struct instr *compile (const unsigned char *src)
 
     }
 
-    code[pc++] = assemble (STOP, pc);
+    instr = assemble (STOP, pc);
+    code[pc++] = instr;
 
     return  code;
 }
@@ -328,13 +340,36 @@ struct instr *study (const char *re)
 void dump_code (struct instr *code)
 {
     int i, op;
-    char    *str[] = {"STOP", "JUMP", "MATCH", "BRANCH"};
 
     for (i = 0; (op = code[i].operand); i++)
-        printf (op == JUMP ? "%2d: %s\t%3d\n" : "%2d: %s\t'%c'\n",
-                i, str[op], code[i].address);
+        printf (op == JUMP ? "%2d: %s  %3d\n" : "%2d: %s  '%c'\n",
+                i, op_name[op], code[i].address);
 }
 
+/*
+
+    >>> from loosey.mini import MiniC; mini = MiniC()
+    >>> mini.eval_file('examples/regexp-bytecode.c')
+    main()
+
+    >>> mini.eval(r"""
+    ...     struct instr *code = study("a(b|c)*d");
+    ...     void test(const char *re, const char *input) {
+    ...         struct instr *code = study(re);
+    ...         printf("%s ~ %s == %i\n",
+    ...             re, input, execute(code, input));
+    ...     }
+    ...     test("a(b|c)*d", "ad");
+    ...     test("a(b|c)*d", "abccbd");
+    ...     test("a(b|c)*d", "adz");
+    ...     test("a(b|c)*d", "aFFFd");
+    ... """)
+    a(b|c)*d ~ ad == 1
+    a(b|c)*d ~ abccbd == 1
+    a(b|c)*d ~ adz == 0
+    a(b|c)*d ~ aFFFd == 0
+
+*/
 int execute (struct instr *code, const char *src)
 {
     short   i = 0, c = src[i++], pc = 0;
@@ -383,6 +418,18 @@ int execute (struct instr *code, const char *src)
     return  code[pc].operand == STOP;
 }
 
+int main_alt (void) {
+    // Alternate main() for debugging the output of gcc vs loosey...
+    // - BAG, 2026
+    const char *re = "a(b|c)*d";
+    printf("RE: %s\n", re);
+    printf("PREPARED:\n");
+    dump_prepared(convert(re));
+    printf("COMPILED:\n");
+    dump_code(compile(convert(re)));
+    return EXIT_SUCCESS;
+}
+
 int main (void)
 {
     short   i;
@@ -390,13 +437,13 @@ int main (void)
         char    *re;
         char    *s;
     } test[] = {
-        { "abcdefg",    "abcdefg"   },
-        { "(a|b)*a",    "ababababab"    },
-        { "(a|b)*a",    "aaaaaaaaba"    },
-        { "(a|b)*a",    "aaaaaabac" },
-        { "a(b|c)*d",   "abccbcccd" },
-        { "a(b|c)*d",   "abccbcccde"    },
-        { NULL,     NULL        }
+        { "abcdefg",    "abcdefg"     },
+        { "(a|b)*a",    "ababababab"  },
+        { "(a|b)*a",    "aaaaaaaaba"  },
+        { "(a|b)*a",    "aaaaaabac"   },
+        { "a(b|c)*d",   "abccbcccd"   },
+        { "a(b|c)*d",   "abccbcccde"  },
+        { NULL,         NULL          }
     };
 
     for (i = 0; test[i].re; i++) {

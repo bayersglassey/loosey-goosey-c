@@ -1,7 +1,8 @@
 #/usr/bin/env bash
 set -euo pipefail
 
-venv/bin/pytest
+# Run basic unit tests, including doctests
+pytest
 
 # Run preprocessor tests using GCC and loosey
 ./pptests.sh -m gcc
