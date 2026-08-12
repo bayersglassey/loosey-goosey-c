@@ -979,7 +979,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     for child in body:
                         self.on(child)
                 except Return as ret:
-                    return copy_value(ret.value)
+                    return ret.value
                 except Goto as goto:
                     label_match = func.labels.get(goto.label_name)
                     if label_match is None:
@@ -1102,7 +1102,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             elif op == '*':
                 value *= arg
             elif op == '/':
-                value /= arg
+                if isinstance(value, int) and isinstance(arg, int):
+                    value //= arg
+                else:
+                    value /= arg
             elif op == '%':
                 value %= arg
             elif op == '<<':

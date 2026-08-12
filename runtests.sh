@@ -14,3 +14,4 @@ venv/bin/pytest
 # Run doctests on various public-facing documentation files
 python -m doctest README.md
 python -m doctest examples/reverse_slice.c
+python -m doctest examples/regexp-bytecode.c

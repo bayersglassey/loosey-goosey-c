@@ -7,6 +7,7 @@ from typing import (
     Iterable,
     Sequence,
     Callable,
+    Union,
 )
 from functools import cached_property
 
@@ -19,6 +20,11 @@ POSITIONAL_PARAM_KINDS = (
 )
 
 NO_DEFAULT = object()
+
+class _Empty:
+    """Used to represent BlockMemory elements with no value"""
+    def __repr__(self): return 'EMPTY'
+EMPTY = _Empty()
 
 Value = Any
 
@@ -69,25 +75,12 @@ def value_as_string(value: Value) -> str:
     # PROBABLY TODO: use bytes instead of str everywhere...
     if isinstance(value, str):
         return value
-    elif isinstance(value, bytes):
+    elif isinstance(value, (bytes, bytearray)):
+        value = bytes(value)
         return value.decode()
     elif isinstance(value, Pointer):
-
-        # We could do something fancy like this as an optimization, but we
-        # need to be careful of the meaning of negative string indexes in
-        # Python, etc...
-        #if isinstance(value.mem, SequenceBackedMemoryBlock):
-        #    return value.mem.data[value.index:]
-
-        buf = bytearray()
-        for index, elem in value.items():
-            i = value_as_int(elem)
-            if i == 0:
-                # NUL byte
-                break
-            buf.append(i)
-            index += 1
-        return buf.decode() # I sure hope this is valid UTF-8!..
+        value = value.as_c_string()
+        return value.decode() # I sure hope this is valid UTF-8!..
     else:
         return Exception(f"Expected string, got: {value!r}")
 
@@ -506,6 +499,11 @@ class BaseMemoryBlock:
     def __getitem__(self, index: int) -> Value: ...
     def copy(self) -> 'BaseMemoryBlock': ...
 
+    def get(self, index: int, default: Value = None) -> Value:
+        # NOTE: subclasses may wish to override this method with a more
+        # performant implementation
+        return self[index] if index in self else default
+
     def update(self, entries: Iterable[tuple[int, Value]]):
         # NOTE: subclasses may wish to override this method with a more
         # performant implementation
@@ -544,6 +542,12 @@ class SequenceBackedMemoryBlock(BaseMemoryBlock):
 
     def __init__(self, data: Sequence[Value]):
         super().__init__()
+
+        # See also: _SEQUENCE_TYPES
+        # TODO: shooould we get rid of that?..
+        # Like, are we really ok with wrapping a list of arbitrary Python
+        # objects?..
+
         if isinstance(data, str):
             # Make sure the elements of self.data are integers, i.e. C chars
             data = data.encode()
@@ -694,6 +698,9 @@ class MemoryBlock(BaseMemoryBlock):
             self._update_indexes(index)
         return self.entries[index]
 
+    def get(self, index: int, default: Value = None) -> Value:
+        return self.entries.get(index, default)
+
 
 class Pointer:
     """Behaves like a C pointer, i.e. an offset into a block of memory.
@@ -712,6 +719,8 @@ class Pointer:
         Pointer(-1..2)
         >>> ptr + 2
         Pointer(-3..0)
+        >>> (ptr + 5) - (ptr + 2)
+        3
         >>> (ptr + 2)[-3]
         'hello'
         >>> (ptr + 2)[0]
@@ -804,13 +813,35 @@ class Pointer:
     def __repr__(self) -> str:
         return self.mkrepr()
 
-    def as_list(self) -> list[Value]:
+    def as_c_string(self) -> bytes:
         # Particularly useful for doctests!..
-        return [self[i] for i in range(self.min_index, self.max_index + 1)]
+        buf = bytearray()
+        for index, elem in self.items():
+            c = value_as_int(elem) % 256
+            if c == 0:
+                # NUL byte
+                break
+            buf.append(c)
+        return bytes(buf)
 
-    def as_string(self) -> str:
+    def as_list(self) -> list[Value]:
+        """
+
+            >>> Pointer(MemoryBlock.from_sequence([1, EMPTY, 3])).as_list()
+            [1, EMPTY, 3]
+
+            >>> Pointer(MemoryBlock.from_sequence([EMPTY, 1, 2, EMPTY])).as_list()
+            [1, 2]
+
+        """
         # Particularly useful for doctests!..
-        return value_as_string(self)
+        values = [self.get(i, EMPTY)
+            for i in range(self.min_index, self.max_index + 1)]
+        non_empty_indexes = [i for i, value in enumerate(values)
+            if value is not EMPTY]
+        min_non_empty_index = min(non_empty_indexes)
+        max_non_empty_index = max(non_empty_indexes)
+        return values[min_non_empty_index: max_non_empty_index + 1]
 
     @property
     def contents(self) -> Value:
@@ -842,8 +873,13 @@ class Pointer:
     def __add__(self, index: int) -> 'Pointer':
         return Pointer(self.mem, self.index + index)
 
-    def __sub__(self, index: int) -> 'Pointer':
-        return Pointer(self.mem, self.index - index)
+    def __sub__(self, other: Union[int, 'Pointer']) -> Union['Pointer', int]:
+        if isinstance(other, Pointer):
+            if other.mem is not self.mem:
+                raise Exception("Can't subtract pointers with different underlying memory blocks: {self!r} - {other!r}")
+            return self.index - other.index
+        else:
+            return Pointer(self.mem, self.index - other)
 
     __radd__ = __add__
 
@@ -852,6 +888,9 @@ class Pointer:
 
     def __getitem__(self, index: int) -> Value:
         return self.mem[self.index + index]
+
+    def get(self, index: int, default: Value = None) -> Value:
+        return self.mem.get(index, default)
 
     def free(self):
         self.mem.free()

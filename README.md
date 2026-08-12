@@ -214,14 +214,92 @@ Stack: 30
 > q
 ```
 
+...and for even more interesting examples, see below...
+
 
 ## Doctests for C
 
-Hey, look, I made a doctest for a C function I found in the CPython source...
+Python has a built-in module called "doctest", which lets you run unit tests
+found embedded in your code (especially in "docstrings", which are multiline
+strings associated with individual modules, classes, and functions).
+* https://docs.python.org/3/library/doctest.html
+
+Doctests look something like this, with commands prefixed with `>>>`, and
+followed by expected output on subsequent lines:
+```python
+
+>>> x = 2
+>>> x + 4
+6
+>>> for i in range(3): print(i)
+0
+1
+2
+
+```
+
+Interestingly, doctest can be used with any file, not just Python source
+files; for instance, all the doctests in this README are run as part of this
+repo's test suite (see [runtests.sh](/runtests.sh)).
+
+So, once we have a C interpreter implemented in Python, we can include
+doctests in our C code!..
+
+Here is an example .c file, which I extracted from a larger file in the
+CPython source code, and added a doctest to:
 * [reverse_slice.c](/examples/reverse_slice.c)
+
+I can run the doctests in that file the same way I would for any other
+file.
+If there are no test failures, then there is no output.
+If there are test failures, e.g. if I edit the .c file and introduce a bug,
+they show up something like this:
+```
+$ python -m doctest examples/reverse_slice.c
+**********************************************************************
+File "examples/reverse_slice.c", line 30, in reverse_slice.c
+Failed example:
+    mini.eval("""
+        PyObject *objs[] = {1, 20, 30, 40, 5};
+        reverse_slice(&objs[1], &objs[4]);
+        print(objs.as_list());
+    """)
+Expected:
+    [1, 40, 300, 20, 5]
+Got:
+    [1, 40, 30, 20, 5]
+**********************************************************************
+1 items had failures:
+   1 of   5 in reverse_slice.c
+***Test Failed*** 1 failures.
+```
+
+The approach is very simple: the doctest manually imports and instantiates
+the MiniC class, and uses it to evalute the C file.
+(The file's path must be hardcoded in the doctest; it would be nice if there
+were a global variable called e.g. `__file__` with the path of the file
+currently being executed by doctest, AFAIK but there is not.)
+
+Like this:
+```python
+from loosey.mini import MiniC
+mini = MiniC()
+mini.eval_file('examples/reverse_slice.c')
+```
 
 In this case, I had to copy-paste the function out of the C file I found it in
 (CPython's Objects/listobject.c), because MiniC wasn't able to parse that file
 as-is.
 Going forward, I'd like to increasingly be able to just point MiniC at existing
 files, and extract functions from them directly...
+
+Here is a more exciting example:
+* [regexp-bytecode.c](/examples/regexp-bytecode.c)
+
+...it's a complete "bytecode machine implementation of Ken Thompson's
+on-the-fly regular expression compiler", which I got from Russ Cox's website,
+while reading his excellent articles such as "Regular Expression Matching Can
+Be Simple And Fast":
+* https://swtch.com/~rsc/regexp/regexp1.html
+
+All I did to the file was to change `CHAR_MAX` to `SCHAR_MAX` and add doctests!
