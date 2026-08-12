@@ -17,7 +17,8 @@ from loosey.runtime import (
     Declaration,
     Declarator,
     InitDeclarator,
-    StructOrUnion,
+    CStructlike,
+    CEnum,
     Function,
     PythonFunction,
     TypeDef,
@@ -388,6 +389,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             scope[name] = Pointer(value)
 
+    def declare_tagged(self, tag: str, value: Value):
+        # Struct/union/enum tags use the same scoping mechanism as everything
+        # else, but have a different "namespace".
+        # We implement this by reusing our exising scopes, but using a 'tag:'
+        # prefix to turn tags into "identifiers" which don't clash with real
+        # identifiers.
+        self.declare_var('tag:' + tag, value)
+
+    def get_tagged(self, tag: str, default=NO_DEFAULT) -> Value:
+        return self.get_var('tag:' + tag, default)
+
     def parse_declarator(self, match: ParseMatch) -> Declarator:
         key = match.unique_id
         declarator = self.parsed_declarators.get(key)
@@ -603,19 +615,23 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # other than char *.
         return self.on(match.children[1])
 
-    def on_enum__enum_specifier(self, match: ParseMatch) -> tuple[Optional[str], dict[str, int]]:
+    def on_enum__enum_specifier(self, match: ParseMatch) -> CEnum:
         """
 
             >>> mini = MiniC()
 
-            >>> mini.eval('enum T', 'enum_specifier')
-            ('T', {})
+            >>> mini.eval('enum T', 'enum_specifier').pprint()
+            enum T:
 
-            >>> mini.eval('enum { x }', 'enum_specifier')
-            (None, {'x': 0})
+            >>> mini.eval('enum { x }', 'enum_specifier').pprint()
+            enum:
+              x = 0
 
-            >>> mini.eval('enum T { x, y = 2, z, }', 'enum_specifier')
-            ('T', {'x': 0, 'y': 2, 'z': 3})
+            >>> mini.eval('enum T { x, y = 2, z, }', 'enum_specifier').pprint()
+            enum T:
+              x = 0
+              y = 2
+              z = 3
 
         """
 
@@ -663,9 +679,12 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         for name, value in values.items():
             self.declare_var(name, value)
 
-        return (tag, values)
+        enum = CEnum(tag, values)
+        if tag is not None:
+            self.declare_tagged(tag, enum)
+        return enum
 
-    def on_struct_or_union_specifier(self, match: ParseMatch) -> StructOrUnion:
+    def on_struct_or_union_specifier(self, match: ParseMatch) -> CStructlike:
         """
 
             >>> mini = MiniC()
@@ -712,11 +731,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         for child in fields:
             declarations.append(self.parse_declaration(child))
 
-        return StructOrUnion(
+        struct = CStructlike(
             kind=kind,
             tag=tag,
             field_declarations=declarations,
         )
+        if tag is not None:
+            self.declare_tagged(tag, struct)
+        return struct
 
     def on_declaration_list(self, match: ParseMatch) -> dict[str, Value]:
         intialized_values = {}

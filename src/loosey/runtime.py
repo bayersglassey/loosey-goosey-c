@@ -201,10 +201,33 @@ class Declaration(NamedTuple):
         return 'typedef' in self.specifiers
 
 
-class StructOrUnion(NamedTuple):
-    kind: str # 'struct' or 'union'
-    tag: Optional[str]
-    field_declarations: list[Declaration]
+class CTagged:
+    def __init__(self, kind: str, tag: Optional[str]):
+        self.kind = kind # 'struct' or 'union' or 'enum'
+        self.tag = tag
+
+    def pprint(self): ...
+
+
+class CEnum(CTagged):
+    def __init__(self, tag, values: dict[str, int]):
+        super().__init__('enum', tag)
+        self.values = values
+
+    def pprint(self):
+        msg = self.kind
+        if self.tag is not None:
+            msg = f'{msg} {self.tag}'
+        print(f"{msg}:")
+        for name, value in self.values.items():
+            print(f"  {name} = {value}")
+
+
+class CStructlike(CTagged):
+    def __init__(self, kind, tag, field_declarations: list[Declaration]):
+        assert kind in ('struct', 'union')
+        super().__init__(kind, tag)
+        self.field_declarations = field_declarations
 
     def pprint(self):
         msg = self.kind
