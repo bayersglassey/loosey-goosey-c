@@ -31,6 +31,7 @@ from loosey.runtime import (
     Goto,
     Exit,
     value_as_bool,
+    value_as_char,
     value_as_int,
     value_as_pointer,
     copy_value,
@@ -1004,7 +1005,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         elif token.toktype == 'STRING':
             return token.parse_string()
         elif token.toktype == 'CHAR':
-            return ord(token.parse_char())
+            return value_as_char(token.parse_char())
         else:
             # This should never happen
             raise ParseError(token, f"Dunno literal: {match.prettystring()}")

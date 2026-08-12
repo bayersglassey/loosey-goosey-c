@@ -7,7 +7,7 @@
 #define INT8_WIDTH 8
 #define UINT8_WIDTH 8
 #define INT8_MIN (-(1 << INT8_WIDTH) / 2)
-#define INT8_MAX ((1 << INT8_WIDTH) / 2 + 1)
+#define INT8_MAX ((1 << INT8_WIDTH) / 2 - 1)
 #define UINT8_MAX ((1 << UINT8_WIDTH) - 1)
 
 #define INT_FAST8_WIDTH INT8_WIDTH

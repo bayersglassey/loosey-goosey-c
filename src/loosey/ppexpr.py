@@ -6,6 +6,7 @@ from loosey.grammar import (
     GrammarEvaluator,
     ParseMatch,
 )
+from loosey.runtime import value_as_char
 
 
 GRAMMAR_FILENAME = get_data_filepath('ppexpr-grammar.txt')
@@ -219,7 +220,7 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
         if token.toktype == 'NUMBER':
             return _parse_number(token)
         elif token.toktype == 'CHAR':
-            return ord(token.parse_char())
+            return value_as_char(token.parse_char())
         else:
             # Identifiers all have the value 0, because they were supposed
             # to have been expanded before being passed in to parse_pp_expr

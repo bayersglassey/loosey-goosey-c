@@ -7,6 +7,7 @@ from loosey.runtime import (
     Pointer,
     MemoryBlock,
     value_as_string,
+    value_as_char,
     Exit,
 )
 
@@ -170,6 +171,8 @@ class CStdlib:
         c = file.read(1)
         if not c:
             return self.EOF
+        # "return the character read as an unsigned char cast to an int or
+        # EOF on end of file or error"
         return ord(c)
 
     @_cstdlib_register()
@@ -186,6 +189,8 @@ class CStdlib:
         if isinstance(c, int):
             c = chr(c)
         file.write(c)
+        # "return the character written as an unsigned char cast to an int or
+        # EOF on error"
         return ord(c)
 
     @_cstdlib_register()
@@ -215,7 +220,7 @@ class CStdlib:
         data = file.read(size - 1)
         for i, c in enumerate(data):
             # TODO: figure out how we're going to do strings for real...
-            s[i] = ord(c)
+            s[i] = value_as_char(c)
         return s # return s on success, NULL on error
 
     @_cstdlib_register()

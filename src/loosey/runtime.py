@@ -46,6 +46,35 @@ def value_as_bool(value: Value) -> bool:
         return True
 
 
+def value_as_char(value: Value) -> int:
+    """Interpret a C value as a signed char.
+    Why signed?.. because despite the C standard saying char might be signed
+    or unsigned, on my computer, it's signed.
+    And examples/regexp-bytecode.c relies on it being signed, too.
+
+        >>> value_as_char(0)
+        0
+
+        >>> value_as_char(-1)
+        -1
+
+        >>> value_as_char(-129)
+        127
+
+        >>> value_as_char(-128)
+        -128
+
+        >>> value_as_char(128)
+        -128
+
+        >>> value_as_char(127)
+        127
+
+    """
+    i = value_as_int(value)
+    return (i + 128) % 256 - 128
+
+
 def value_as_int(value: Value) -> int:
     """Interpret a C value as an integer"""
     if isinstance(value, (str, bytes)):
@@ -621,6 +650,17 @@ class MemoryBlock(BaseMemoryBlock):
         # this for initializers, like `char s[20] = "Hi"`, where the
         # initializer may contain less data than the array.
         self = MemoryBlock()
+
+        # TODO: Figure out whether we're really going to allow use of
+        # arbitrary Python sequence types from C...
+        # For now, we're hardcoding the idea that str, bytes, bytearray
+        # mean `const char *`.
+        # See also: _SEQUENCE_TYPES
+        if isinstance(data, str):
+            data = map(value_as_char, data.encode())
+        elif isinstance(data, (bytes, bytearray)):
+            data = map(value_as_char, data)
+
         self.update(enumerate(data))
         return self
 
