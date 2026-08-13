@@ -372,6 +372,8 @@
             ...but this may be better done as part of a larger investigation
             into type casting...
 
+    [ ] Correctly handle static variables within functions!..
+
 [ ] LOOSIER AND GOOSIER PARSING OF TYPE NAMES:
     Currently, we only mark an identifier as being a type name if we encounter
     an explicit typedef for it.
@@ -434,7 +436,7 @@
 [ ] Can g++ be convinced to output C?.. i.e. can we use it in the same
     way that C++ was originally a fancy C preprocessor?
 
-[ ] Try to get to the point where we can run the functions in
+[X] Try to get to the point where we can run the functions in
     ~/tarballs/sqlite/sqlite-preprocessed-3530400/hash.c
     ...which requires that `#include "hash.h"` work, but I think could
     probably survive `#include "sqliteInt.h"` failing?..
@@ -442,3 +444,5 @@
     detect type names.
     And then, we should be able to run them, and pretty-print the Hash
     objects!..
+
+    OMFG, it's working. See: examples/sqlite/hash.c

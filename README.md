@@ -220,6 +220,8 @@ Stack: 30
 
 ## Doctests for C
 
+### Overview
+
 Python has a built-in module called "doctest", which lets you run unit tests
 found embedded in your code (especially in "docstrings", which are multiline
 strings associated with individual modules, classes, and functions).
@@ -245,6 +247,9 @@ repo's test suite (see [runtests.sh](/runtests.sh)).
 
 So, once we have a C interpreter implemented in Python, we can include
 doctests in our C code!..
+
+
+### Example: reverse_slice() from CPython
 
 Here is an example .c file, which I extracted from a larger file in the
 CPython source code, and added a doctest to:
@@ -298,6 +303,9 @@ as-is.
 Going forward, I'd like to increasingly be able to just point MiniC at existing
 files, and extract functions from them directly...
 
+
+### Example: bytecode-based regex compiler
+
 Here is a more exciting example:
 * [regexp-bytecode.c](/examples/regexp-bytecode.c)
 
@@ -309,3 +317,59 @@ Be Simple And Fast":
 
 Pretty much all I did to the file was to change tabs to spaces, fix compile()
 to avoid undefined behaviour involving `++`, and add doctests!
+
+
+### Example: SQLite's hash table
+
+Now we're cooking!!
+* [hash.c](/examples/sqlite/hash.c)
+
+What I really like about this is that we can see the internal structure
+of SQLite's Hash struct after inserting a couple of keys:
+```
+      0x0: Struct:
+      0x1:   'first': Pointer (offset=0) into memory:
+      0x2:     0: Struct:
+      0x3:       'pKey': Pointer (offset=0) into memory:
+      0x4:         As a C string: b'key2'
+      0x5:         0: 107
+      0x6:         1: 101
+      0x7:         2: 121
+      0x8:         3: 50
+      0x9:         4: 0
+      0xa:       'h': 3723489572637945191932448255262090573131
+      0xb:       'data': Pointer (offset=0) into memory:
+      0xc:         As a C string: b'world'
+      0xd:         0: 119
+      0xe:         1: 111
+      0xf:         2: 114
+     0x10:         3: 108
+     0x11:         4: 100
+     0x12:         5: 0
+     0x13:       'next': Pointer (offset=0) into memory:
+     0x14:         0: Struct:
+     0x15:           'pKey': Pointer (offset=0) into memory:
+     0x16:             As a C string: b'key1'
+     0x17:             0: 107
+     0x18:             1: 101
+     0x19:             2: 121
+     0x1a:             3: 49
+     0x1b:             4: 0
+     0x1c:           'h': 3723489572637945191932448255259436137370
+     0x1d:           'data': Pointer (offset=0) into memory:
+     0x1e:             As a C string: b'bonjour'
+     0x1f:             0: 98
+     0x20:             1: 111
+     0x21:             2: 110
+     0x22:             3: 106
+     0x23:             4: 111
+     0x24:             5: 117
+     0x25:             6: 114
+     0x26:             7: 0
+     0x27:           'next': 0
+     0x28:           'prev': Pointer (offset=0) into memory at 0x1
+     0x29:       'prev': 0
+     0x2a:   'count': 2
+     0x2b:   'htsize': 0
+     0x2c:   'ht': 0
+```

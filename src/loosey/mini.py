@@ -969,6 +969,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 raise ParseError(token,
                     f"Function {name!r} was never defined!")
             return PythonFunction(func, name)
+        elif kind == 'pointer':
+            # Pointers default to NULL, of course
+            return 0
         else:
             # Other kinds of variable are initialized to a
             # magic Struct object
@@ -1148,7 +1151,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             >>> test(declaration, 1)
             === sue:
               0x0: Struct:
-              0x1:   'name': Struct:
+              0x1:   'name': 0
               0x2:   'age': Struct:
 
             Typedefs combined with structs and arrays:

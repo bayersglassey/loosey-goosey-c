@@ -29,7 +29,7 @@ from loosey.pplex import (
 )
 from loosey.ppexpr import ConditionalExpressionEvaluator
 from loosey.recursion import debug_recursion, debug_recursion_log
-from loosey.grammar import GrammarEvaluator
+from loosey.grammar import ParseMatch, GrammarEvaluator
 
 
 class ConditionalFrame(NamedTuple):
@@ -727,7 +727,7 @@ class Preprocessor:
             # lot of stuff with its parent (e.g. macros), but doesn't share
             # other things (e.g. the "ifstack")
             lines = tokenize_file(filepath)
-            child_pp = self.create_child()
+            child_pp = self.create_child(local_dir=os.path.dirname(filepath))
             yield from child_pp.process(lines)
 
     @debug_recursion()
@@ -1340,6 +1340,22 @@ class GrammarEvaluatorWithPreprocessor(GrammarEvaluator):
 
     def coerce_lines(self, lines: list[str]) -> list[Token]:
         return list(self.pp.process(lines))
+
+    def parse_file(self, filename: str, *args, **kwargs) -> Optional[ParseMatch]:
+        pp = self.pp
+        try:
+            self.pp = pp.create_child(local_dir=os.path.dirname(filename))
+            return super().parse_file(filename, *args, **kwargs)
+        finally:
+            self.pp = pp
+
+    def eval_file(self, filename: str, *args, **kwargs):
+        pp = self.pp
+        try:
+            self.pp = pp.create_child(local_dir=os.path.dirname(filename))
+            return super().eval_file(filename, *args, **kwargs)
+        finally:
+            self.pp = pp
 
 
 def get_local_dir_from_args(args) -> str:

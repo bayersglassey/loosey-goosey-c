@@ -71,8 +71,8 @@ def pprint_value(value: Value, *, dots=False, **print_kwargs):
           0x3:     0: 1
           0x4:     1: 2
           0x5:     2: 3
-          0x6:   1: Pointer (offset=1) into memory @0x1
-          0x7:   2: Pointer (offset=2) into memory @0x1
+          0x6:   1: Pointer (offset=1) into memory at 0x1
+          0x7:   2: Pointer (offset=2) into memory at 0x1
 
         Here is a circular structure, with two pointers referring to each
         others' underlying memory blocks:
@@ -87,7 +87,7 @@ def pprint_value(value: Value, *, dots=False, **print_kwargs):
           0x1:   0: 'hello'
           0x2:   1: Pointer (offset=0) into memory:
           0x3:     0: 'world'
-          0x4:     1: Pointer (offset=0) into memory @0x0
+          0x4:     1: Pointer (offset=0) into memory at 0x0
 
         Here is a circular linked list of structures:
         >>> s1 = Struct({'x': 1})
@@ -103,7 +103,7 @@ def pprint_value(value: Value, *, dots=False, **print_kwargs):
           0x3:     'x': 2
           0x4:     'next': Struct:
           0x5:       'x': 3
-          0x6:       'next': Struct @0x0
+          0x6:       'next': Struct at 0x0
 
     """
 
@@ -132,7 +132,7 @@ def pprint_value(value: Value, *, dots=False, **print_kwargs):
         if isinstance(value, Struct):
             visited_address = visited.get(id(value))
             if visited_address is not None:
-                print_line(f"Struct @{hex(visited_address)}")
+                print_line(f"Struct at {hex(visited_address)}")
             else:
                 visited[id(value)] = address
                 print_line("Struct:")
@@ -141,7 +141,7 @@ def pprint_value(value: Value, *, dots=False, **print_kwargs):
         elif isinstance(value, Pointer):
             visited_address = visited.get(id(value.mem))
             if visited_address is not None:
-                print_line(f"Pointer (offset={value.index}) into memory @{hex(visited_address)}")
+                print_line(f"Pointer (offset={value.index}) into memory at {hex(visited_address)}")
             else:
                 visited[id(value.mem)] = address
                 print_line(f"Pointer (offset={value.index}) into memory:")
@@ -588,6 +588,9 @@ class Struct:
 
     def __iter__(self):
         return iter(self.fields)
+
+    def pprint(self):
+        pprint_value(self)
 
     def items(self) -> Iterator[tuple[str, Value]]:
         for attr, ptr in self.fields.items():
@@ -1041,6 +1044,9 @@ class Pointer:
             mem = MemoryBlock(mem, size=1)
         self.__dict__['mem'] = mem
         self.__dict__['index'] = index
+
+    def pprint(self):
+        pprint_value(self)
 
     @property
     def min_index(self) -> int:

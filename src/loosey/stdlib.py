@@ -6,6 +6,7 @@ from loosey.runtime import (
     Value,
     Pointer,
     MemoryBlock,
+    value_as_bool,
     value_as_string,
     value_as_char,
     Exit,
@@ -80,6 +81,12 @@ class CStdlib:
         return {
             name: getattr(self, attr)
             for attr, name in _CSTDLIB_REGISTRY.items()}
+
+    @_cstdlib_register()
+    def __loosey_assert__(self, cond: Value):
+        # NOTE: in assert.h, we `#define assert __loosey_assert__`
+        if not value_as_bool(cond):
+            raise AssertionError(f"Failed condition: {cond!r}")
 
     @_cstdlib_register()
     def exit(self, code: int):

@@ -1,3 +1,4 @@
+
 #/usr/bin/env bash
 set -euo pipefail
 
@@ -16,3 +17,4 @@ pytest
 python -m doctest README.md
 python -m doctest examples/cpython/reverse_slice.c
 python -m doctest examples/regexp-bytecode.c
+python -m doctest examples/sqlite/hash.c
