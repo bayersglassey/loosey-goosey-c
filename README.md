@@ -25,8 +25,8 @@ C code, and play with it at a REPL?
 
 The idea will be to map the runtime semantics of C onto some Python classes,
 then have a C parser which is intentionally loosey-goosey, so it can parse
-even fragments of C code without having to `#include` all the proper stuff,
-and then you can instantiate the types and call the functions and so on, and
+fragments of C code without having to `#include` all the proper stuff, and
+then you can instantiate the types and call the functions and so on, and
 have things fail at runtime instead of compile-time, for instance if you
 call some function which attempts to call another function which hasn't been
 defined.
@@ -99,9 +99,10 @@ The interpreter's code lives here:
 * [mini.py](/src/loosey/mini.py)
 
 There are fairly extensive tests, see:
-* Doctests throughout the Python code
+* Doctests throughout the Python code (and other places, like this README)
 * C tests in [minictests](/minictests), run with [minictests.sh](/minictests.sh)
 * Preprocessor tests in [pptests](/pptests), run with [pptests.sh](/pptests.sh)
+* All tests are kicked off by: [runtests.sh](/runtests.sh)
 
 The "roadmap" is this big ol' checklist:
 * [TODO](/TODO)
