@@ -14,6 +14,7 @@ from loosey.pp import (
 from loosey.stdlib import CStdlib
 from loosey.runtime import (
     Value,
+    BaseType,
     Declaration,
     Declarator,
     InitDeclarator,
@@ -588,15 +589,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def _parse_declaration(self, match: ParseMatch) -> Declaration:
         assert match.rule_name in ('declaration', 'field_declaration'), match
 
-        # The declaration specifiers, e.g. 'int'
-        declspec = match.children[0]
-
-        # Looking for specifiers like 'typedef', 'extern', 'const', etc
-        specifiers: set[str] = {child.token.value
-            for child in
-                declspec.findall('storage_class_specifier')
-                + declspec.findall('type_qualifier')}
-
         # Init declarators, e.g. `x`, `*x[3]`, `x = 2`, etc
         init_declarators: list[InitDeclarator] = []
         for child in match.children[1:]:
@@ -617,8 +609,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         return Declaration(
             match=match,
-            declspec=declspec,
-            specifiers=specifiers,
             init_declarators=init_declarators,
         )
 
@@ -892,7 +882,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 value = TypeDef(
                     name=name,
                     declaration=declaration,
-                    init_declarator=init_declarator,
+                    declarator=init_declarator.declarator,
                 )
                 self.declare_var(name, value)
                 intialized_values[name] = value
@@ -973,6 +963,41 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             return value
 
+    def expand_type(self, declaration: Declaration, declarator: Declarator) -> tuple[BaseType, list[str]]:
+        """
+
+            >>> mini = MiniC()
+            >>> mini.eval(
+            ...     'typedef struct T { int x; } T;'
+            ...     'typedef T *T_PTRS[];' # An array of pointers
+            ... )
+            >>> declaration = mini.parse_declaration(
+            ...     # A pointer to a function returning an array of pointers
+            ...     mini.parse('T_PTRS (*x)(int);', 'declaration'))
+            >>> declarator = declaration.init_declarators[0].declarator
+
+            >>> base_type, kinds = mini.expand_type(declaration, declarator)
+            >>> kinds # A pointer to a function returning an array of pointers
+            ['pointer', 'func', 'array', 'pointer']
+            >>> base_type[0]
+            'struct'
+            >>> mini.parse_structlike(base_type[1]).pprint()
+            struct T:
+              x
+
+        """
+        kinds = []
+        while True:
+            # Expand typedefs
+            kinds += declarator.kinds
+            base_type, typedef_name = declaration.base_type
+            if base_type != 'typedef':
+                break
+            typedef = self.get_var(typedef_name)
+            declaration = typedef.declaration
+            declarator = typedef.declarator
+        return declaration.base_type, kinds
+
     def on_initializer_list__initializer(self, match: ParseMatch) -> list[Initializer]:
         return [self.on(child) for child in match.children]
 
@@ -1007,8 +1032,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
         """
 
-        # TODO: finish this!..
-
         if not isinstance(initializer, list):
             # Initializer is already a value, just use it as-is
             return initializer
@@ -1019,9 +1042,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             mem = MemoryBlock()
             mem.update(enumerate(map(self.initializer_as_value, initializer)))
             return Pointer(mem)
-
-        typedef_match = declaration.declspec.find('typedef:')
-        typedef = typedef_match and self.get_var(typedef_match.token.value)
 
         # Figure out whether we're dealing with an underlying struct/union type
         structlike_match = declaration.declspec.find('struct_or_union_specifier')

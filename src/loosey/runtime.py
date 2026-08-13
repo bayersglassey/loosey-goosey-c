@@ -11,7 +11,7 @@ from typing import (
 )
 from functools import cached_property
 
-from loosey.grammar import ParseMatch
+from loosey.grammar import ParseMatch, ParseError
 
 
 POSITIONAL_PARAM_KINDS = (
@@ -199,17 +199,54 @@ class InitDeclarator(NamedTuple):
         return self.declarator.kind
 
 
-class Declaration(NamedTuple):
+# The str of a base type is 'builtin', 'enum', 'struct', 'union', or 'typedef'
+BaseType = tuple[str, Any]
+
+
+class Declaration:
     """E.g. `const int x, *y` or `typedef struct T T` or `int x = 1, y = 2`"""
-    match: ParseMatch
-    declspec: ParseMatch
-    specifiers: set[str] # 'typedef', 'extern', 'const', etc
 
-    # These might be init declarators, or field declarators...
-    init_declarators: list[InitDeclarator]
+    def __init__(self, match: ParseMatch, init_declarators: list[InitDeclarator]):
+        self.match = match
 
-    @property
+        # These might be init declarators, or field declarators...
+        self.init_declarators = init_declarators
+
+    @cached_property
+    def declspec(self) -> ParseMatch:
+        # The declaration specifiers, e.g. `int` or `const int` or `struct T`
+        return self.match.children[0]
+
+    @cached_property
+    def base_type(self) -> BaseType:
+        builtins = []
+        for child in self.declspec.children:
+            if child.rule_name == 'struct_or_union_specifier':
+                struct_or_union = child.children[0].token.value
+                return (struct_or_union, child)
+            elif child.rule_name == 'enum_specifier':
+                return ('enum', child)
+            elif child.pattern_name == 'builtin':
+                builtins.append(child.token.value)
+            elif child.pattern_name == 'typedef':
+                return ('typedef', child.token.value)
+        if not builtins:
+            # We should never get here
+            raise ParseError(self.match.token, "Couldn't find base type")
+        return ('builtin', builtins)
+
+    @cached_property
+    def specifiers(self) -> set[str]:
+        # Specifiers like 'typedef', 'extern', 'const', etc
+        return {child.token.value
+            for child in
+                self.declspec.findall('storage_class_specifier')
+                + self.declspec.findall('type_qualifier')}
+
+    @cached_property
     def is_typedef(self) -> bool:
+        # This means we *are* a typedef, not that we *refer* to one
+        # (As opposed to when self.base_type[0] == 'typedef')
         return 'typedef' in self.specifiers
 
 
@@ -268,7 +305,7 @@ class CStructlike(CTagged):
 class TypeDef(NamedTuple):
     name: str
     declaration: Declaration
-    init_declarator: InitDeclarator
+    declarator: Declarator
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({self.name!r})'
