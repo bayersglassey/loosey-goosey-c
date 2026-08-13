@@ -80,6 +80,14 @@
 
         If we end up supporting it, make sure to update docs/preprocessor.md
 
+        UPDATE: awww dang, sqlite requires it to create a multi-line
+        single-line string literal!.. see sqliteInt.h:
+
+            # error "Two or more of the following compile-time configuration options\
+             are defined but at most one is allowed:\
+             SQLITE_SYSTEM_MALLOC, SQLITE_WIN32_MALLOC, SQLITE_MEMDEBUG,\
+             SQLITE_ZERO_MALLOC"
+
     [ ] Consider looking at the GNGU cpp options & implementing some:
         https://gcc.gnu.org/onlinedocs/cpp/Invocation.html
 
@@ -224,6 +232,17 @@
 
     [X] Support enums
 
+    [ ] I suspect we should give up on supporting arbitrary Python values,
+        unless we always conceptually wrap them in `void*`.
+        So for instance, in C the behaviour of `+` and `[...]` is linked,
+        so that `x[3] == (x + 3)[0]` must always be true.
+        If `x` is a Python list or str, that guarantee is gone.
+        However, the idea of `d->["x"]` in C being equivalent to `d['x']`
+        in Python if d is a dict, I believe still works if we think of d
+        as being a `void*` in C.
+        In other words: field access and calls are ok, indexing and addition
+        are not!
+
     [ ] Better run-time error messages!..
         But see also the TODO about better parsing error messages, which might
         be good to do first...
@@ -328,7 +347,7 @@
         but we need a way to also specify whether the function definitions
         etc should be added to a given MiniC instance...
 
-    [ ] Support struct initializers, `T t = {1, 2};` etc
+    [X] Support struct initializers, `T t = {1, 2};` etc
         ...presumably requires parsing of struct declarations!
         ...and then un-skip minictests/arrays_and_structs.c.SKIP
 
@@ -338,12 +357,20 @@
         So we probably need a Union type, which has at most one key at any
         given time...
 
-        [ ] Struct should probably behave like the number 0 under arithmetic
+        [X] Struct should probably behave like the number 0 under arithmetic
             operations... so if we allocate some memory with calloc, or
             malloc+memset, we can use it like an array of numbers
 
     [ ] Support variadic functions
         See: https://en.cppreference.com/c/variadic/va_arg
+
+    [ ] Support C99 initializers
+
+        [ ] `{.x = 1}`, `{[0] = 1}`, etc
+
+        [ ] `(struct { int x, y; })(1, 2)`
+            ...but this may be better done as part of a larger investigation
+            into type casting...
 
 [ ] LOOSIER AND GOOSIER PARSING OF TYPE NAMES:
     Currently, we only mark an identifier as being a type name if we encounter
@@ -406,3 +433,12 @@
 
 [ ] Can g++ be convinced to output C?.. i.e. can we use it in the same
     way that C++ was originally a fancy C preprocessor?
+
+[ ] Try to get to the point where we can run the functions in
+    ~/tarballs/sqlite/sqlite-preprocessed-3530400/hash.c
+    ...which requires that `#include "hash.h"` work, but I think could
+    probably survive `#include "sqliteInt.h"` failing?..
+    But anyway, we should tooootally be able to parse those, if we auto
+    detect type names.
+    And then, we should be able to run them, and pretty-print the Hash
+    objects!..

@@ -33,6 +33,7 @@ from loosey.runtime import (
     Break,
     Goto,
     Exit,
+    pprint_value,
     value_as_bool,
     value_as_char,
     value_as_int,
@@ -225,6 +226,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.add_python_func(self.runtime_error, '__loosey_error__')
         self.add_python_func(self.trace, '__loosey_trace__')
         self.add_python_func(print)
+        self.add_python_func(pprint_value, 'pprint')
 
         # Add some default stdlib functions
         self.stdlib = CStdlib()
@@ -405,6 +407,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def get_tagged(self, tag: str, default=NO_DEFAULT) -> CTagged:
         return self.get_var('tag:' + tag, default)
 
+    def complete_tagged(self, tagged: CTagged) -> CTagged:
+        """Get the completed definition of a struct/union/enum, e.g. expand
+        `struct T` to the full definition with fields, if such a definition
+        is found in scope"""
+        if not tagged.empty:
+            return tagged
+        expanded = self.get_tagged(tagged.tag, None)
+        if expanded is None:
+            raise Exception("{tagged.kind} {tagged.tag!r} has incomplete type")
+        return expanded
+
     def parse_declarator(self, match: ParseMatch) -> Declarator:
         key = match.unique_id
         declarator = self.parsed_declarators.get(key)
@@ -414,7 +427,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         return declarator
 
     def _parse_declarator(self, match: ParseMatch) -> Declarator:
-        """
+        """Parse a "declarator", e.g. in `int x, *y[3]`, the `x` and `*y[3]`
+        are declarators.
 
             >>> mini = MiniC()
 
@@ -432,14 +446,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             >>> test('*x')
             ('x', ['pointer'])
 
-            >>> test('**x')
-            ('x', ['pointer', 'pointer'])
-
             >>> test('*(x)')
             ('x', ['pointer'])
 
             >>> test('(*x)')
             ('x', ['pointer'])
+
+            >>> test('**x')
+            ('x', ['pointer', 'pointer'])
 
             >>> test('x[]')
             ('x', ['array'])
@@ -449,6 +463,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
             >>> test('(x[])')
             ('x', ['array'])
+
+            >>> test('x[][]')
+            ('x', ['array', 'array'])
 
             >>> test('x()')
             ('x', ['func'])
@@ -544,15 +561,16 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 ptr_child = ptr_child.find('pointer')
 
             # Do we have a suffix, i.e. `[...]` or `(...)`?
-            suffix = child.find(suffix_rule_name)
-            if suffix:
-                if suffix.pattern_name == 'array':
-                    kinds.append('array')
-                elif suffix.pattern_name == 'params':
+            suffix_match = child.find(suffix_rule_name)
+            if suffix_match is not None:
+                if suffix_match.pattern_name == 'array':
+                    for suffix_child in suffix_match.children:
+                        kinds.append('array')
+                elif suffix_match.pattern_name == 'params':
                     kinds.append('func')
                 else:
                     # Should never happen
-                    raise ParseError(suffix.token, f"Unknown suffix: {suffix}")
+                    raise ParseError(suffix_match.token, f"Unknown suffix: {suffix_match}")
 
             # Burrow further into the declarator...
             next_child = child.find(declarator_rule_name)
@@ -637,6 +655,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         body = match.find('block:compound_statement')
         variadic = declarator.match.children[1].find('.* ellipsis') is not None
         function = Function(
+            match=match,
             name=name,
             params=params,
             variadic=variadic,
@@ -662,25 +681,30 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
             >>> mini = MiniC()
 
-            >>> mini.eval('enum T', 'enum_specifier').pprint()
-            enum T:
+            >>> mini.eval('enum E', 'enum_specifier').pprint()
+            enum E
 
             >>> mini.eval('enum { x }', 'enum_specifier').pprint()
             enum:
               x = 0
 
-            >>> mini.eval('enum T { x, y = 2, z, }', 'enum_specifier').pprint()
-            enum T:
+            >>> mini.eval('enum E { x, y = 2, z, }', 'enum_specifier').pprint()
+            enum E:
               x = 0
               y = 2
               z = 3
 
             Evaluating an enum specifier also declares it in the tag namespace,
             and adds its values to the current scope:
-            >>> mini.get_tagged('T').values['y']
+            >>> mini.get_tagged('E').values['y']
             2
             >>> mini.get_var('y')
             2
+
+            NOTE: if no values are declared, we don't store the enum, since
+            that could overwrite a previous definition of it which had values:
+            >>> E2 = mini.eval('enum E2', 'enum_specifier')
+            >>> mini.get_tagged('E2', None)
 
         """
 
@@ -728,8 +752,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         for name, value in values.items():
             self.declare_var(name, value)
 
-        enum = CEnum(tag, values)
-        if tag is not None:
+        enum = CEnum(match, tag, values)
+        if tag is not None and values:
             self.declare_tagged(enum)
         return enum
 
@@ -739,14 +763,20 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             Evaluating a struct or union specifier also declares it in the tag
             namespace:
             >>> mini = MiniC()
+
             >>> T = mini.eval('struct T { int x; }', 'struct_or_union_specifier')
             >>> mini.get_tagged('T') is T
             True
 
+            NOTE: if no fields are declared, we don't store the struct, since
+            that could overwrite a previous definition of it which had fields:
+            >>> T2 = mini.eval('struct T2', 'struct_or_union_specifier')
+            >>> mini.get_tagged('T2', None)
+
         """
         # NOTE: assumes match is of the correct rule name
         structlike = self.parse_structlike(match)
-        if structlike.tag is not None:
+        if structlike.tag is not None and structlike.field_declarations:
             self.declare_tagged(structlike)
         return structlike
 
@@ -768,7 +798,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             ...     mini.parse_structlike(match).pprint()
 
             >>> test('struct T')
-            struct T:
+            struct T
 
             >>> test('struct { int x; }')
             struct:
@@ -807,6 +837,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             declarations.append(self.parse_declaration(child))
 
         return CStructlike(
+            match=match,
             kind=kind,
             tag=tag,
             field_declarations=declarations,
@@ -855,7 +886,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             declarations within it to be evaluated as well:
             >>> mini.eval('struct T { int x; };')
             {}
-            >>> mini.get_tagged('T').field_names
+            >>> list(mini.get_tagged('T').fields)
             ['x']
             >>> mini.eval('enum E { x, y };')
             {}
@@ -890,20 +921,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             # Handle variable initializations
             for init_declarator in declaration.init_declarators:
                 name = init_declarator.name
-                is_array = init_declarator.kind == 'array'
                 initializer = init_declarator.initializer
                 if initializer is not None:
                     is_initializer_list = initializer.spec == 'initializer_list:initializer'
                     if is_initializer_list:
                         # E.g. `= {0}`, `= {1, 2}`, `= {{1, 2}, {3, 4}}`, etc
-                        if is_array:
-                            value = self.initializer_as_value(self.on(initializer))
-                            value = copy_value(value, initializer=True)
-                        else:
-                            # TODO: implement struct initialization lists...
-                            # HACK: for now, we just make sure `= {0}` works
-                            value = self._create_uninitialized_value(
-                                name, init_declarator.declarator)
+                        value = self.convert_initializer(
+                            declaration,
+                            init_declarator.declarator,
+                            self.on(initializer),
+                            initializer.token,
+                        )
                     else:
                         # E.g. `= 3`, `= "hello"`, etc
                         value = copy_value(self.on(initializer), initializer=True)
@@ -920,14 +948,16 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                         # Uninitialized variables are assigned a reasonable
                         # default value
                         value = self._create_uninitialized_value(
-                            name, init_declarator.declarator)
+                            init_declarator.declarator.match.token,
+                            name,
+                            init_declarator.kind,
+                        )
                         self.declare_var(name, value)
                 intialized_values[name] = value
 
         return intialized_values
 
-    def _create_uninitialized_value(self, name: str, declarator: Declarator) -> Value:
-        kind = declarator.kind
+    def _create_uninitialized_value(self, token: Token, name: str, kind: Optional[str]) -> Value:
         if kind == 'array':
             # Array variables are initialized to pointers
             # backed by an auto-growing memory block
@@ -936,10 +966,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             # Functions are initialized to a function which
             # tells you that it's uninitialized
             def func(*args):
-                raise Exception(
-                    f"Function {name!r} "
-                    f"declared at {declarator.match.token.location()} "
-                    "was never defined!")
+                raise ParseError(token,
+                    f"Function {name!r} was never defined!")
             return PythonFunction(func, name)
         else:
             # Other kinds of variable are initialized to a
@@ -968,14 +996,15 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
 
             >>> mini = MiniC()
             >>> mini.eval(
-            ...     'typedef struct T { int x; } T;'
+            ...     'typedef struct T { int x, xs[]; } T;'
             ...     'typedef T *T_PTRS[];' # An array of pointers
+            ...     'typedef union U { int x, xs[]; } U;'
             ... )
+
             >>> declaration = mini.parse_declaration(
             ...     # A pointer to a function returning an array of pointers
             ...     mini.parse('T_PTRS (*x)(int);', 'declaration'))
             >>> declarator = declaration.init_declarators[0].declarator
-
             >>> base_type, kinds = mini.expand_type(declaration, declarator)
             >>> kinds # A pointer to a function returning an array of pointers
             ['pointer', 'func', 'array', 'pointer']
@@ -983,7 +1012,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             'struct'
             >>> mini.parse_structlike(base_type[1]).pprint()
             struct T:
-              x
+              x, xs(array)
+
+            >>> declaration = mini.parse_declaration(
+            ...     mini.parse('U *u;', 'declaration'))
+            >>> declarator = declaration.init_declarators[0].declarator
+            >>> base_type, kinds = mini.expand_type(declaration, declarator)
+            >>> kinds, base_type[0]
+            (['pointer'], 'union')
 
         """
         kinds = []
@@ -1006,59 +1042,248 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             declaration: Declaration,
             declarator: Declarator,
             initializer: Initializer,
+            initializer_token: Optional[Token] = None,
             ) -> Value:
-        """Figures out what the value of an initializer is.
+        r"""Figures out what the value of an initializer is.
         That wouldn't be a hard problem... except when we need to match
         initializer list elements onto struct fields!..
 
             >>> mini = MiniC()
 
+            >>> mini.eval('int i1 = 1, i2 = 2;')
+            {'i1': 1, 'i2': 2}
+            >>> declaration = mini.parse_declaration(mini.parse(
+            ...     'int x = 99, xs[] = {1, 2}, *ptrs[] = {&i1, &i2};'))
+
+            >>> def test(declaration, i):
+            ...     declarator, initializer_match = declaration.init_declarators[i]
+            ...     initializer = mini.on(initializer_match)
+            ...     value = mini.convert_initializer(
+            ...         declaration, declarator, initializer,
+            ...         initializer_match.token)
+            ...     print(f"=== {declarator.name}:")
+            ...     pprint_value(value)
+
+            >>> test(declaration, 0)
+            === x:
+              0x0: 99
+
+            >>> test(declaration, 1)
+            === xs:
+              0x0: Pointer (offset=0) into memory:
+              0x1:   As a C string: b'\x01\x02'
+              0x2:   0: 1
+              0x3:   1: 2
+
+            >>> test(declaration, 2)
+            === ptrs:
+              0x0: Pointer (offset=0) into memory:
+              0x1:   0: Pointer (offset=0) into memory:
+              0x2:     As a C string: b'\x01'
+              0x3:     0: 1
+              0x4:   1: Pointer (offset=0) into memory:
+              0x5:     As a C string: b'\x02'
+              0x6:     0: 2
+
+            Making sure typedefs work as expected:
+            >>> mini.eval('typedef int Integer;')
+            {'Integer': TypeDef('Integer')}
+            >>> declaration = mini.parse_declaration(mini.parse(
+            ...     'Integer x = 99;'))
+            >>> test(declaration, 0)
+            === x:
+              0x0: 99
+
+            Typedefs combined with arrays:
+            >>> mini.eval('typedef int IntArray[];')
+            {'IntArray': TypeDef('IntArray')}
+            >>> declaration = mini.parse_declaration(mini.parse(
+            ...     'IntArray xs[] = {{1, 2}, {3, 4}};'))
+            >>> test(declaration, 0)
+            === xs:
+              0x0: Pointer (offset=0) into memory:
+              0x1:   0: Pointer (offset=0) into memory:
+              0x2:     As a C string: b'\x01\x02'
+              0x3:     0: 1
+              0x4:     1: 2
+              0x5:   1: Pointer (offset=0) into memory:
+              0x6:     As a C string: b'\x03\x04'
+              0x7:     0: 3
+              0x8:     1: 4
+
+            Unions:
+            >>> declaration = mini.parse_declaration(mini.parse(
+            ...     # Only the first member of a union can be initialized
+            ...     # within an initializer list
+            ...     'union { int x, xs[]; } u = {99};'))
+            >>> test(declaration, 0)
+            === u:
+              0x0: Struct:
+              0x1:   'x': 99
+            >>> declaration = mini.parse_declaration(mini.parse(
+            ...     # Only the first member of a union can be initialized
+            ...     # within an initializer list
+            ...     'union { int xs[], x; } u = {{1, 2}};'))
+            >>> test(declaration, 0)
+            === u:
+              0x0: Struct:
+              0x1:   'xs': Pointer (offset=0) into memory:
+              0x2:     As a C string: b'\x01\x02'
+              0x3:     0: 1
+              0x4:     1: 2
+
+            Structs:
+            >>> declaration = mini.parse_declaration(mini.parse('''
+            ...     struct { const char *name; int age; }
+            ...         jim = {"jim", 3}, sue = {0};'''))
+            >>> test(declaration, 0)
+            === jim:
+              0x0: Struct:
+              0x1:   'name': Pointer (offset=0) into memory:
+              0x2:     As a C string: b'jim'
+              0x3:     0: 106
+              0x4:     1: 105
+              0x5:     2: 109
+              0x6:   'age': 3
+            >>> test(declaration, 1)
+            === sue:
+              0x0: Struct:
+              0x1:   'name': Struct:
+              0x2:   'age': Struct:
+
+            Typedefs combined with structs and arrays:
             >>> mini.eval(
             ...     'typedef struct T { int x, xx[2]; } T;'
             ...     'typedef struct Y { struct T t; T tt[2]; } Y;'
             ...     'typedef Y YY[];'
             ... )
             >>> declaration = mini.parse_declaration(mini.parse(
-            ...     # array of array of Y
-            ...     '''YY yy[] = {{{
+            ...     # make sure t.xx is initialized as an array
+            ...     'T t = {0};'))
+            >>> test(declaration, 0)
+            === t:
+              0x0: Struct:
+              0x1:   'x': Struct:
+              0x2:   'xx': Pointer (offset=0) into memory:
+              0x3:     0: Struct:
+            >>> declaration = mini.parse_declaration(mini.parse('''
+            ...     // array of array of Y
+            ...     YY yy[] = {{{
             ...         {1, {2, 3}}, // .t
             ...         {{4, {5, 6}}, {7, {8, 9}}} // .tt
-            ...     }}};'''))
-            >>> declarator, initializer = declaration.init_declarators[0]
-            >>> initializer = mini.on(initializer)
-            >>> value = mini.convert_initializer(declaration, declarator, initializer)
-
-            ...TODO
+            ...     }}};
+            ... '''))
+            >>> test(declaration, 0)
+            === yy:
+              0x0: Pointer (offset=0) into memory:
+              0x1:   0: Pointer (offset=0) into memory:
+              0x2:     0: Struct:
+              0x3:       't': Struct:
+              0x4:         'x': 1
+              0x5:         'xx': Pointer (offset=0) into memory:
+              0x6:           As a C string: b'\x02\x03'
+              0x7:           0: 2
+              0x8:           1: 3
+              0x9:       'tt': Pointer (offset=0) into memory:
+              0xa:         0: Struct:
+              0xb:           'x': 4
+              0xc:           'xx': Pointer (offset=0) into memory:
+              0xd:             As a C string: b'\x05\x06'
+              0xe:             0: 5
+              0xf:             1: 6
+             0x10:         1: Struct:
+             0x11:           'x': 7
+             0x12:           'xx': Pointer (offset=0) into memory:
+             0x13:             As a C string: b'\x08\t'
+             0x14:             0: 8
+             0x15:             1: 9
 
         """
 
-        if not isinstance(initializer, list):
-            # Initializer is already a value, just use it as-is
-            return initializer
+        base_type, kinds = self.expand_type(declaration, declarator)
+        base_type, base_type_arg = base_type
 
-        if declarator.kind == 'array':
-            # Convert initializer list into an array value, i.e. a pointer
-            # to an initialized block of memory
-            mem = MemoryBlock()
-            mem.update(enumerate(map(self.initializer_as_value, initializer)))
-            return Pointer(mem)
+        def visit(initializer: Initializer, kind_i: int = 0) -> Value:
+            kind = None if kind_i >= len(kinds) else kinds[kind_i]
 
-        # Figure out whether we're dealing with an underlying struct/union type
-        structlike_match = declaration.declspec.find('struct_or_union_specifier')
-        if not structlike_match:
-            return initializer
+            if not isinstance(initializer, list):
+                if initializer == 0 and not isinstance(initializer, Struct):
+                    # As a special case, initializing stuff to 0 always
+                    # produces an "uninitialized" value, e.g. a magic
+                    # Struct... this is to support the `= {0}` idiom,
+                    # which e.g. for a struct, should *not* necessarily
+                    # assign the number 0 to its first field!.. consider:
+                    #
+                    #   struct t { int x; };
+                    #   struct { struct t child; } parent = {0};
+                    #
+                    # ...in this example, parent.child shouldn't be the
+                    # number 0, rather it should be a struct t with its
+                    # memory "zeroed out", which for us means it should
+                    # be an initialized value, i.e. a fresh Struct.
+                    return self._create_uninitialized_value(
+                        initializer_token, declarator.name, kind)
+                # Initializer is already a value, just use it as-is!
+                # ...except, take a copy of it first, which also converts from
+                # e.g. Python str to Pointer
+                return copy_value(initializer, initializer=True)
 
-        structlike = self.parse_structlike(structlike_match)
-        if not structlike.field_declarations:
-            structlike = self.get_tagged(structlike.tag)
+            if kind is None:
+                if base_type not in ('struct', 'union'):
+                    raise ParseError(declaration.match.token,
+                        f"Can't use initializer list with non-array/struct/union type {base_type, base_type_arg}. "
+                        f"List was: {initializer!r}")
+                structlike = self.parse_structlike(base_type_arg)
+                structlike = self.complete_tagged(structlike)
+                if base_type == 'union':
+                    # Union initializer
+                    # NOTE: unions can only be initialized to their first member
+                    if len(initializer) != 1:
+                        raise ParseError(initializer_token,
+                            f"Expected 1 initializer element for union defined at {structlike.token.location()}, "
+                            f"got: {initializer!r}")
+                    field_name, (field_declaration, field_declarator) = next(
+                        iter(structlike.fields.items()))
+                    field_value = self.convert_initializer(
+                        field_declaration,
+                        field_declarator,
+                        initializer[0],
+                        initializer_token,
+                    )
+                    return Struct({field_name: field_value})
+                else:
+                    # Struct initializer
+                    if len(initializer) < len(structlike.fields):
+                        # Pad the initializer out with zeros if need be.
+                        # This ensures that all fields are initialized with
+                        # the proper "kind" -- in particular, array fields
+                        # should be initialized to Pointer, not Struct
+                        initializer += [0] * (len(structlike.fields) - len(initializer))
+                    field_values = {
+                        field_name: self.convert_initializer(
+                            field_declaration,
+                            field_declarator,
+                            child_initializer,
+                            initializer_token,
+                        )
+                        for child_initializer, (field_name,
+                            (field_declaration, field_declarator))
+                        in zip(initializer, structlike.fields.items())}
+                    return Struct(field_values)
+            elif kind == 'array':
+                # Array initializer
+                # Convert initializer list into an array value, i.e. a pointer
+                # to an initialized block of memory
+                mem = MemoryBlock()
+                mem.update(enumerate(visit(child_initializer, kind_i + 1)
+                    for child_initializer in initializer))
+                return Pointer(mem)
+            else:
+                # E.g. if kind in ('pointer', 'func')
+                raise ParseError(declaration.match.token,
+                    f"Can't use initializer list with {kind}. List was: {initializer!r}")
 
-    def initializer_as_value(self, initializer: Initializer) -> Value:
-        if isinstance(initializer, list):
-            mem = MemoryBlock()
-            mem.update(enumerate(map(self.initializer_as_value, initializer)))
-            return Pointer(mem)
-        else:
-            return initializer
+        return visit(initializer)
 
     def on_unary_expression(self, match: ParseMatch) -> Value:
         op = match.children[0].token.value
@@ -1145,10 +1370,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 value = self.dereference(value)
             if not isinstance(value, Struct):
                 field_msg = ('->' if match.pattern_name == 'arrow' else '.') + attr
-                raise Exception(f"Can only get address-of-field ({field_msg}) from Struct, not from {type(value)}")
+                raise ParseError(match.token,
+                    f"Can only get address-of-field ({field_msg}) from Struct, "
+                    f"not from {type(value)}")
             return value.get_or_create_field(attr)
         else:
-            raise ParseError(match.token, f"Can't produce an lvalue: {match.prettystring()}")
+            raise ParseError(match.token,
+                f"Can't produce an lvalue: {match.prettystring()}")
 
     def on_postfix_expression(self, match: ParseMatch) -> Value:
         children = iter(match.children)
@@ -1197,8 +1425,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 except Goto as goto:
                     label_match = func.labels.get(goto.label_name)
                     if label_match is None:
-                        labels_msg = "from top-level labels: " + ' '.join(func.labels) if func.labels else "function has no top-level labels"
-                        raise Exception(f"Top-level label {goto.label_name!r} not found in func: {func} ({labels_msg})")
+                        labels_msg = (
+                            "from top-level labels: " + ' '.join(func.labels)
+                            if func.labels else
+                            "function has no top-level labels")
+                        raise ParseError(goto.match.token,
+                            f"Top-level label {goto.label_name!r} not found in func: "
+                            f"{func} ({labels_msg})")
                     label_index = func.label_statements.index(label_match)
                     # Go around the loop again, starting from the labeled
                     # child of the function body...
@@ -1207,7 +1440,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     # body.
                     body = func.label_statements[label_index:]
                 except ControlFlow as ex:
-                    raise ParseError(ex.match.token, "Uncaught control flow: {ex.__class__.__name__}")
+                    raise ParseError(ex.match.token,
+                        "Uncaught control flow: {ex.__class__.__name__}")
                 else:
                     break
 
@@ -1514,7 +1748,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 extra_match = None
             else:
                 # Should never happen
-                raise Exception(f"For-loop with unexpected number of children: {match}")
+                raise ParseError(match.token,
+                    f"For-loop with unexpected number of children: {match}")
 
             if cond_match.rule_name == 'empty_expression_statement':
                 cond_match = None

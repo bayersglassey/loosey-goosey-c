@@ -248,7 +248,7 @@ param_identifier
     ;
 
 declarator_array_suffix
-    | '[' ( constant_expression )? ']'
+    | index: '[' ( constant_expression )? ']'
     ;
 
 declarator_suffix

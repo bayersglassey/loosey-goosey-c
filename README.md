@@ -81,8 +81,8 @@ Work in progress.
 Allows C code to be run dynamically, using Python values.
 Functions and values can be freely exchanged between C and Python.
 
-It's very dynamic: it ignores the C type system entirely, using Python objects
-as values, including a custom Pointer class.
+It's very dynamic: it ignores the C type system almost entirely, using Python
+objects as values, including a custom Pointer class.
 If you refer to uninitialized memory, you generally get an instance of Struct,
 which is a custom Python class which secretly adds fields to itself whenever
 you try to refer to them.

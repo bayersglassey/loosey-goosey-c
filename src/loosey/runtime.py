@@ -31,6 +31,132 @@ Value = Any
 _SEQUENCE_TYPES = (str, bytes, list, tuple, bytearray)
 
 
+def pprint_value(value: Value, *, dots=False, **print_kwargs):
+    r"""Pretty-prints a C value
+
+        >>> pprint_value(1)
+          0x0: 1
+
+        >>> pprint_value(Struct({'x': 1, 'y': 2}))
+          0x0: Struct:
+          0x1:   'x': 1
+          0x2:   'y': 2
+
+        >>> pprint_value(Pointer(MemoryBlock.from_sequence([1, 2, 3])))
+          0x0: Pointer (offset=0) into memory:
+          0x1:   As a C string: b'\x01\x02\x03'
+          0x2:   0: 1
+          0x3:   1: 2
+          0x4:   2: 3
+
+        >>> pprint_value(Pointer(MemoryBlock.from_sequence('abc')))
+          0x0: Pointer (offset=0) into memory:
+          0x1:   As a C string: b'abc'
+          0x2:   0: 97
+          0x3:   1: 98
+          0x4:   2: 99
+
+        Here we have two memory blocks, one which contains 3 integers, and
+        the other which contains 3 pointers into the first memory block:
+        >>> mem1 = MemoryBlock.from_sequence([1, 2, 3])
+        >>> mem2 = MemoryBlock.from_sequence([
+        ...     Pointer(mem1, 0),
+        ...     Pointer(mem1, 1),
+        ...     Pointer(mem1, 2),
+        ... ])
+        >>> pprint_value(Pointer(mem2))
+          0x0: Pointer (offset=0) into memory:
+          0x1:   0: Pointer (offset=0) into memory:
+          0x2:     As a C string: b'\x01\x02\x03'
+          0x3:     0: 1
+          0x4:     1: 2
+          0x5:     2: 3
+          0x6:   1: Pointer (offset=1) into memory @0x1
+          0x7:   2: Pointer (offset=2) into memory @0x1
+
+        Here is a circular structure, with two pointers referring to each
+        others' underlying memory blocks:
+        >>> mem1 = MemoryBlock()
+        >>> mem2 = MemoryBlock()
+        >>> mem1[0] = 'hello'
+        >>> mem1[1] = Pointer(mem2)
+        >>> mem2[0] = 'world'
+        >>> mem2[1] = Pointer(mem1)
+        >>> pprint_value(mem2[1])
+          0x0: Pointer (offset=0) into memory:
+          0x1:   0: 'hello'
+          0x2:   1: Pointer (offset=0) into memory:
+          0x3:     0: 'world'
+          0x4:     1: Pointer (offset=0) into memory @0x0
+
+        Here is a circular linked list of structures:
+        >>> s1 = Struct({'x': 1})
+        >>> s2 = Struct({'x': 2})
+        >>> s3 = Struct({'x': 3})
+        >>> s1['next'] = s2
+        >>> s2['next'] = s3
+        >>> s3['next'] = s1
+        >>> pprint_value(s1)
+          0x0: Struct:
+          0x1:   'x': 1
+          0x2:   'next': Struct:
+          0x3:     'x': 2
+          0x4:     'next': Struct:
+          0x5:       'x': 3
+          0x6:       'next': Struct @0x0
+
+    """
+
+    # We increment this "address" every time we print an object, and we
+    # print the current "address" at the start of every line.
+    # Whenever the same complex value is referred to more than once, it's
+    # only recursed into the first time, and its "address" is saved;
+    # thereafter, references to its "address" are shown.
+    # So our output looks vaguely like a memory dump...
+    address = 0
+
+    # maps id(value) to the value of address at which it was first printed
+    visited: dict[int, int] = {}
+
+    address_width = 5
+
+    def visit(value, depth=0, key=None):
+        def print_line(msg, depth=depth, key=key):
+            nonlocal address
+            address_msg = hex(address).rjust(address_width)
+            print_prefix = f"{address_msg}: " + ('. ' if dots else '  ') * depth
+            if key is not None:
+                print_prefix = f'{print_prefix}{key!r}: '
+            address += 1
+            print(print_prefix + msg, **print_kwargs)
+        if isinstance(value, Struct):
+            visited_address = visited.get(id(value))
+            if visited_address is not None:
+                print_line(f"Struct @{hex(visited_address)}")
+            else:
+                visited[id(value)] = address
+                print_line("Struct:")
+                for field_name, field_value in value.items():
+                    visit(field_value, depth + 1, field_name)
+        elif isinstance(value, Pointer):
+            visited_address = visited.get(id(value.mem))
+            if visited_address is not None:
+                print_line(f"Pointer (offset={value.index}) into memory @{hex(visited_address)}")
+            else:
+                visited[id(value.mem)] = address
+                print_line(f"Pointer (offset={value.index}) into memory:")
+                all_int = all(isinstance(mem_value, int)
+                    for mem_index, mem_value in value.mem.items())
+                if all_int:
+                    print_line(f"As a C string: {value.as_c_string()}", depth + 1, key=None)
+                for mem_index, mem_value in value.mem.items():
+                    visit(mem_value, depth + 1, mem_index)
+        else:
+            print_line(repr(value))
+
+    visit(value)
+
+
 def value_as_bool(value: Value) -> bool:
     """Interpret a C value as a boolean"""
     if value is None:
@@ -251,7 +377,10 @@ class Declaration:
 
 
 class CTagged:
-    def __init__(self, kind: str, tag: Optional[str]):
+    empty: bool
+
+    def __init__(self, match: ParseMatch, kind: str, tag: Optional[str]):
+        self.match = match
         self.kind = kind # 'struct' or 'union' or 'enum'
         self.tag = tag
 
@@ -259,47 +388,62 @@ class CTagged:
 
 
 class CEnum(CTagged):
-    def __init__(self, tag, values: dict[str, int]):
-        super().__init__('enum', tag)
+    def __init__(self, match, tag, values: dict[str, int]):
+        super().__init__(match, 'enum', tag)
         self.values = values
+
+    @cached_property
+    def empty(self) -> bool:
+        return not self.values
 
     def pprint(self):
         msg = self.kind
         if self.tag is not None:
             msg = f'{msg} {self.tag}'
-        print(f"{msg}:")
-        for name, value in self.values.items():
-            print(f"  {name} = {value}")
+        if not self.values:
+            print(msg)
+        else:
+            print(f"{msg}:")
+            for name, value in self.values.items():
+                print(f"  {name} = {value}")
 
 
 class CStructlike(CTagged):
-    def __init__(self, kind, tag, field_declarations: list[Declaration]):
+    def __init__(self, match, kind, tag, field_declarations: list[Declaration]):
         assert kind in ('struct', 'union')
-        super().__init__(kind, tag)
+        super().__init__(match, kind, tag)
         self.field_declarations = field_declarations
 
-    @property
-    def field_names(self) -> list[str]:
-        return [declarator.name
+    @cached_property
+    def empty(self) -> bool:
+        return not self.field_declarations
+
+    @cached_property
+    def fields(self) -> dict[str, tuple[Declaration, Declarator]]:
+        return {
+            init_declarator.name: (declaration, init_declarator.declarator)
             for declaration in self.field_declarations
-            for declarator in declaration.init_declarators]
+            for init_declarator in declaration.init_declarators}
 
     def pprint(self):
         msg = self.kind
         if self.tag is not None:
             msg = f'{msg} {self.tag}'
-        print(f"{msg}:")
-        for declaration in self.field_declarations:
-            parts = []
-            for init_declarator in declaration.init_declarators:
-                part = init_declarator.name
-                if init_declarator.kind:
-                    part = f'{part}({init_declarator.kind})'
-                parts.append(part)
-            msg = ', '.join(parts)
-            if declaration.specifiers:
-                msg = f"{' '.join(declaration.specifiers)} {msg}"
-            print(f"  {msg}")
+        if not self.field_declarations:
+            print(msg)
+        else:
+            print(f"{msg}:")
+            for declaration in self.field_declarations:
+                parts = []
+                for init_declarator in declaration.init_declarators:
+                    part = init_declarator.name
+                    if init_declarator.kind:
+                        part = f'{part}({init_declarator.kind})'
+                    parts.append(part)
+                msg = ', '.join(parts)
+                if declaration.specifiers:
+                    msg = f"{' '.join(declaration.specifiers)} {msg}"
+                print(f"  {msg}")
 
 
 class TypeDef(NamedTuple):
@@ -315,12 +459,14 @@ class Function:
     def __init__(
             self,
             *,
+            match: ParseMatch,
             name: str,
             params: list[str],
             variadic: bool,
             body: ParseMatch,
             call: Callable,
             ):
+        self.match = match
         self.name = name
         self.params = params
         self.variadic = variadic

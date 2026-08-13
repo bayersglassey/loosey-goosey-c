@@ -207,6 +207,10 @@ class Token(NamedTuple):
 class ParseError(Exception):
 
     def __init__(self, token: Optional[Token], msg):
+        if token is not None and not isinstance(token, Token):
+            # E.g. if we got a ParseMatch by accident
+            token = token.token
+
         # NOTE: we almost never want to have token be None.
         # The one case I know we need to support is when we're trying to
         # tokenize a file which consists of a single backslash. O_o
