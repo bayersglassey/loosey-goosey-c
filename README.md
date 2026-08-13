@@ -275,7 +275,7 @@ Got:
 ```
 
 The approach is very simple: the doctest manually imports and instantiates
-the MiniC class, and uses it to evalute the C file.
+the MiniC Python class, and uses it to evalute the C file.
 (The file's path must be hardcoded in the doctest; it would be nice if there
 were a global variable called e.g. `__file__` with the path of the file
 currently being executed by doctest, AFAIK but there is not.)
@@ -285,6 +285,10 @@ Like this:
 from loosey.mini import MiniC
 mini = MiniC()
 mini.eval_file('examples/reverse_slice.c')
+
+# ...now add tests, using mini to run C code and inspect its output.
+# All macros, typedefs, global variables, functions etc from reverse_slice.c
+# are available.
 ```
 
 In this case, I had to copy-paste the function out of the C file I found it in
@@ -303,4 +307,4 @@ Be Simple And Fast":
 * https://swtch.com/~rsc/regexp/regexp1.html
 
 Pretty much all I did to the file was to change tabs to spaces, fix compile()
-to avoid undefined involving `++`, and add doctests!
+to avoid undefined behaviour involving `++`, and add doctests!
