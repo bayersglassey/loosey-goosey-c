@@ -1,5 +1,6 @@
 /*
-    NOTE: I downloaded this file from:
+    NOTE: I downloaded this file (and then modified it, mostly
+    just adding doctests) from:
     https://swtch.com/~rsc/regexp/regexp-bytecode.c.txt
 
     See also this fantastic related paper by Russ Cox:
