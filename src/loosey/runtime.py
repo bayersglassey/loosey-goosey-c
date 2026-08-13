@@ -203,7 +203,9 @@ def value_as_char(value: Value) -> int:
 
 def value_as_int(value: Value) -> int:
     """Interpret a C value as an integer"""
-    if isinstance(value, (str, bytes)):
+    if value is None:
+        return 0
+    elif isinstance(value, (str, bytes)):
         return ord(value)
     else:
         # NOTE: this will also turn Struct instances into 0
@@ -225,6 +227,8 @@ def value_as_string(value: Value) -> str:
         >>> ptr[2] = '!'
         >>> value_as_string(ptr)
         'Hi!'
+        >>> value_as_string(ptr + 1)
+        'i!'
 
     """
     # PROBABLY TODO: use bytes instead of str everywhere...
@@ -1087,6 +1091,8 @@ class Pointer:
         # Particularly useful for doctests!..
         buf = bytearray()
         for index, elem in self.items():
+            if index < 0:
+                continue
             c = value_as_int(elem) % 256
             if c == 0:
                 # NUL byte

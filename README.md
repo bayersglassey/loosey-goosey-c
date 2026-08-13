@@ -155,7 +155,7 @@ add(x, y)
 
 # Creating a pointer in Python and passing it to C code:
 >>> ptr = Pointer(3)
->>> mini.eval('void f(void *ptr) { *ptr += 1; }')(ptr)
+>>> mini.eval('void f(int *ptr) { *ptr += 1; }')(ptr)
 >>> ptr
 Pointer(4)
 
@@ -187,6 +187,78 @@ Struct({'x': 4, 'y': 10})
 0, 0
 2, 5
 4, 10
+
+# Pretty-printing a nested structure, even a circular one:
+>>> mini.eval("""
+...     typedef struct list { int data; struct list *next; } List;
+...     struct list *mklist(int data, List *next) {
+...         List *list = malloc(sizeof *list);
+...         list->data = data;
+...         list->next = next;
+...         return list;
+...     }
+...     List *list = mklist(1, mklist(2, mklist(3, 0)));
+...     list->next->next->next = list; // make it circular!..
+...     pprint(list);
+... """)
+  0x0: Pointer (offset=0) into memory:
+  0x1:   0: Struct:
+  0x2:     'data': 1
+  0x3:     'next': Pointer (offset=0) into memory:
+  0x4:       0: Struct:
+  0x5:         'data': 2
+  0x6:         'next': Pointer (offset=0) into memory:
+  0x7:           0: Struct:
+  0x8:             'data': 3
+  0x9:             'next': Pointer (offset=0) into memory at 0x0
+
+# Pretty-printing a structure with multiple pointers to offsets of the
+# same underlying block of memory:
+>>> mini.eval(r"""
+...     typedef struct { const char *data; int len; } Word;
+...     const char WORD_DATA[] = "cathousebear";
+...     Word words[] = {
+...         {WORD_DATA + 0, 3},
+...         {WORD_DATA + 3, 5},
+...         {WORD_DATA + 8, 4},
+...     };
+...     printf("The words are:\n");
+...     int i;
+...     for (i = 0; i < 3; i++) {
+...         Word word = words[i];
+...         printf("  %.*s\n", word.len, word.data);
+...     }
+...     printf("...and here's what's going on in memory:\n");
+...     pprint(words);
+... """)
+The words are:
+  cat
+  house
+  bear
+...and here's what's going on in memory:
+  0x0: Pointer (offset=0) into memory:
+  0x1:   0: Struct:
+  0x2:     'data': Pointer (offset=0) into memory:
+  0x3:       As a C string: b'cathousebear'
+  0x4:       0: 99
+  0x5:       1: 97
+  0x6:       2: 116
+  0x7:       3: 104
+  0x8:       4: 111
+  0x9:       5: 117
+  0xa:       6: 115
+  0xb:       7: 101
+  0xc:       8: 98
+  0xd:       9: 101
+  0xe:       10: 97
+  0xf:       11: 114
+ 0x10:     'len': 3
+ 0x11:   1: Struct:
+ 0x12:     'data': Pointer (offset=3) into memory at 0x2
+ 0x13:     'len': 5
+ 0x14:   2: Struct:
+ 0x15:     'data': Pointer (offset=8) into memory at 0x2
+ 0x16:     'len': 4
 
 ```
 
@@ -324,8 +396,8 @@ to avoid undefined behaviour involving `++`, and add doctests!
 Now we're cooking!!
 * [hash.c](/examples/sqlite/hash.c)
 
-What I really like about this is that we can see the internal structure
-of SQLite's Hash struct after inserting a couple of keys:
+Note how easily (by calling our built-in `pprint()`) we can see the internal
+structure of SQLite's Hash struct after inserting a couple of keys:
 ```
       0x0: Struct:
       0x1:   'first': Pointer (offset=0) into memory:
@@ -373,3 +445,8 @@ of SQLite's Hash struct after inserting a couple of keys:
      0x2b:   'htsize': 0
      0x2c:   'ht': 0
 ```
+
+...it's a doubly-linked list, so there are some circular references going
+on, but they're handled just fine.
+Note how the "prev" field of the second entry is a pointer "into memory at
+0x1", that is, into the "first" field of the hash table!..
