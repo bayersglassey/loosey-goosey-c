@@ -279,6 +279,10 @@ size_t memlen (const unsigned char *s)
     12: JUMP     13
     13: MATCH   'd'
 
+    ...note, it looks to me as if the compilation algorithm could use some
+    optimization: we've got an apparently unnecessary JUMP right off the bat,
+    it looks like the JUMPs at addresses 9 and 12 can never be reached, etc!..
+
 */
 struct instr *compile (const unsigned char *src)
 {
@@ -353,7 +357,6 @@ void dump_code (struct instr *code)
     main()
 
     >>> mini.eval(r"""
-    ...     struct instr *code = study("a(b|c)*d");
     ...     void test(const char *re, const char *input) {
     ...         struct instr *code = study(re);
     ...         printf("%s ~ %s == %i\n",
