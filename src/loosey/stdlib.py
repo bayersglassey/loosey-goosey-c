@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from loosey.runtime import (
     Value,
+    Struct,
     Pointer,
     MemoryBlock,
     value_as_bool,
@@ -284,6 +285,52 @@ class CStdlib:
         if size is None:
             size = min(len(src), len(dst)) # ???
         raise NotImplementedError("TODO")
+
+    @_cstdlib_register()
+    def memset(self, dst: Pointer, val: int = 0, size: Optional[int] = None) -> Pointer:
+        """
+
+            >>> stdlib = CStdlib()
+
+            >>> dst = Pointer(MemoryBlock.from_sequence(
+            ...     [10, 20, 30, 40, Struct({'x': 1})]))
+            >>> dst.as_list()
+            [10, 20, 30, 40, Struct({'x': 1})]
+            >>> _ = stdlib.memset(dst + 1, 0, 2) # zero out 2 items
+            >>> dst.as_list()
+            [10, 0, 0, 40, Struct({'x': 1})]
+            >>> _ = stdlib.memset(dst) # zero out all items
+            >>> dst.as_list()
+            [0, 0, 0, 0, Struct()]
+
+        """
+        if not isinstance(dst, Pointer):
+            raise Exception(f"Can only use memset() on a pointer, got: {dst!r}")
+        if val != 0:
+            raise Exception(f"Second argument to memset is currently only allowed to be 0")
+        for i, value in dst.items():
+            if i < 0:
+                continue
+            if size is not None and i >= size:
+                break
+            if isinstance(value, Struct):
+                # NOTE: this probably isn't quite good enough!..
+                # We're trying to "zero out" all memory locations pointed to
+                # by our original pointer, so we're replacing Struct instances
+                # with fresh Struct instances.
+                # However, if any of the struct's fields were array fields,
+                # then really we need to put a fresh Pointer(MemoryBlock())
+                # in that field!..
+                # But that would require us to distinguish between Struct
+                # fields which are arrays, and those which simply hold a
+                # Pointer, and we don't currently make that distinction...
+                # I guess at some point, we'll likely be forced to keep
+                # better track of our C types. :P
+                value = Struct()
+            else:
+                value = 0
+            dst[i] = value
+        return dst # return the original pointer
 
     @_cstdlib_register()
     def strlen(self, s) -> int:
