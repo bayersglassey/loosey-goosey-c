@@ -1,0 +1,22 @@
+=== STRCMP:
+strcmp("", "") = 0
+strcmp("a", "") = 1
+strcmp("", "a") = -1
+strcmp("a", "a") = 0
+strcmp("abc", "abc") = 0
+strcmp("abz", "abc") = 1
+strcmp("abz", "abz") = 0
+strcmp("abcc", "abc") = 1
+strcmp("abc", "abcc") = -1
+=== STRNCMP:
+strncmp("", "", 0) = 0
+strncmp("", "", 1) = 0
+strncmp("a", "", 0) = 0
+strncmp("a", "", 1) = 1
+strncmp("", "a", 0) = 0
+strncmp("", "a", 1) = -1
+strncmp("a", "a", 1) = 0
+strncmp("abcc", "abc", 3) = 0
+strncmp("abcc", "abc", 4) = 1
+strncmp("abc", "abcc", 3) = 0
+strncmp("abc", "abcc", 4) = -1
