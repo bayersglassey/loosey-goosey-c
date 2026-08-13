@@ -19,7 +19,7 @@ typedef int PyObject;
 
     >>> from loosey.mini import MiniC, Exit
     >>> mini = MiniC()
-    >>> mini.eval_file('examples/reverse_slice.c')
+    >>> mini.eval_file('examples/cpython/reverse_slice.c')
     reverse_slice(lo, hi)
 
     >>> try: mini.eval('reverse_slice(NULL, NULL)')

@@ -248,7 +248,7 @@ doctests in our C code!..
 
 Here is an example .c file, which I extracted from a larger file in the
 CPython source code, and added a doctest to:
-* [reverse_slice.c](/examples/reverse_slice.c)
+* [reverse_slice.c](/examples/cpython/reverse_slice.c)
 
 I can run the doctests in that file the same way I would for any other
 file.
@@ -256,9 +256,9 @@ If there are no test failures, then there is no output.
 If there are test failures, e.g. if I edit the .c file and introduce a bug,
 they show up something like this:
 ```
-$ python -m doctest examples/reverse_slice.c
+$ python -m doctest examples/cpython/reverse_slice.c
 **********************************************************************
-File "examples/reverse_slice.c", line 30, in reverse_slice.c
+File "examples/cpython/reverse_slice.c", line 30, in reverse_slice.c
 Failed example:
     mini.eval("""
         PyObject *objs[] = {1, 20, 30, 40, 5};
@@ -285,7 +285,7 @@ Like this:
 ```python
 from loosey.mini import MiniC
 mini = MiniC()
-mini.eval_file('examples/reverse_slice.c')
+mini.eval_file('examples/cpython/reverse_slice.c')
 
 # ...now add tests, using mini to run C code and inspect its output.
 # All macros, typedefs, global variables, functions etc from reverse_slice.c
