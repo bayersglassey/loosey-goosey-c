@@ -279,7 +279,7 @@ direct_abstract_declarator
 abstract_declarator
     # NOTE: currently grammar.py doesn't allow empty matches, which is good,
     # because we want at least one of the following 3 sub-patterns to match:
-    | decl: ( pointer )? ( direct_abstract_declarator )? ( declarator_suffix )?
+    | decl: ( pointer )? ( direct_abstract_declarator )? ( abstract_declarator_suffix )?
     ;
 
 # NOTE: this is its own rule, to make sure it always generates a ParseMatch
@@ -297,8 +297,7 @@ parameter_list
 
 parameter_declaration
     | declaration_specifiers declarator
-    | declaration_specifiers abstract_declarator
-    | declaration_specifiers
+    | declaration_specifiers ( abstract_declarator )?
     ;
 
 type_name

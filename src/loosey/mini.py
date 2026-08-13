@@ -420,73 +420,111 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             >>> def test(text, rule_name='declarator'):
             ...     match = mini.parse(text, rule_name)
             ...     decl = mini.parse_declarator(match)
-            ...     return decl.name, decl.kind
+            ...     return decl.name, decl.kinds
 
             >>> test('x')
-            ('x', None)
+            ('x', [])
 
             >>> test('(x)')
-            ('x', None)
+            ('x', [])
 
             >>> test('*x')
-            ('x', 'pointer')
+            ('x', ['pointer'])
+
+            >>> test('**x')
+            ('x', ['pointer', 'pointer'])
 
             >>> test('*(x)')
-            ('x', 'pointer')
+            ('x', ['pointer'])
 
             >>> test('(*x)')
-            ('x', 'pointer')
+            ('x', ['pointer'])
 
             >>> test('x[]')
-            ('x', 'array')
+            ('x', ['array'])
 
             >>> test('(x)[]')
-            ('x', 'array')
+            ('x', ['array'])
 
             >>> test('(x[])')
-            ('x', 'array')
+            ('x', ['array'])
 
             >>> test('x()')
-            ('x', 'func')
+            ('x', ['func'])
 
             >>> test('(x)()')
-            ('x', 'func')
+            ('x', ['func'])
 
             >>> test('(x())')
-            ('x', 'func')
+            ('x', ['func'])
 
         The most obnoxious distinction in C's entire type system: function
         pointer vs function returning pointer:
 
             >>> test('(*x)()')
-            ('x', 'pointer')
+            ('x', ['pointer', 'func'])
 
             >>> test('*x()')
-            ('x', 'func')
+            ('x', ['func', 'pointer'])
 
             >>> test('*(x)()')
-            ('x', 'func')
+            ('x', ['func', 'pointer'])
 
         Another tricky distinction: array of pointers vs pointer to array:
 
             >>> test('*x[]')
-            ('x', 'array')
+            ('x', ['array', 'pointer'])
 
             >>> test('(*x)[]')
-            ('x', 'pointer')
+            ('x', ['pointer', 'array'])
+
+        This all needs to also work when parsing abstract declarators:
+
+            >>> test('*', 'abstract_declarator')
+            (None, ['pointer'])
+
+            >>> test('**', 'abstract_declarator')
+            (None, ['pointer', 'pointer'])
+
+            >>> test('* const *', 'abstract_declarator')
+            (None, ['pointer', 'pointer'])
+
+            >>> test('*(*)', 'abstract_declarator')
+            (None, ['pointer', 'pointer'])
+
+            >>> test('*((*))', 'abstract_declarator')
+            (None, ['pointer', 'pointer'])
+
+            >>> test('[]', 'abstract_declarator')
+            (None, ['array'])
+
+            >>> test('*[]', 'abstract_declarator')
+            (None, ['array', 'pointer'])
+
+            >>> test('(*)[]', 'abstract_declarator')
+            (None, ['pointer', 'array'])
 
         This all needs to also work when parsing declarators within struct or
         union declarations:
 
             >>> test('(*x)[]', 'field_declarator')
-            ('x', 'pointer')
+            ('x', ['pointer', 'array'])
 
             Also, we need to handle bitfields:
             >>> test('x: 4', 'field_declarator')
-            ('x', 'bitfield')
+            ('x', ['bitfield'])
 
         """
-        assert match.rule_name in ('declarator', 'field_declarator'), match
+        assert match.rule_name in (
+            'declarator',
+            'abstract_declarator',
+            'field_declarator',
+        ), match
+
+        declarator_rule_name = 'declarator'
+        if match.rule_name == 'abstract_declarator':
+            declarator_rule_name = 'abstract_declarator'
+        suffix_rule_name = declarator_rule_name + '_suffix'
 
         is_bitfield = match.pattern_name == 'bitfield'
 
@@ -495,38 +533,48 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # 2. `*(*(x)[])()` -> `*(x)[]`
         #    ...note how we don't count the parentheses around `(x)`, since
         #    they don't affect the type of x!.. e.g. `*((x))` is a pointer.
-        child = innermost_match = match
+        child = match
+        kinds = ['bitfield'] if is_bitfield else []
         while True:
-            if len(child.children) > 1:
-                innermost_match = child
-            next_child = child.find('declarator')
+            # Do we start with a pointer, i.e. `*`?..
+            ptr_child = child.find('pointer')
+            while ptr_child:
+                kinds.append('pointer')
+                ptr_child = ptr_child.find('pointer')
+
+            # Do we have a suffix, i.e. `[...]` or `(...)`?
+            suffix = child.find(suffix_rule_name)
+            if suffix:
+                if suffix.pattern_name == 'array':
+                    kinds.append('array')
+                elif suffix.pattern_name == 'params':
+                    kinds.append('func')
+                else:
+                    # Should never happen
+                    raise ParseError(suffix.token, f"Unknown suffix: {suffix}")
+
+            # Burrow further into the declarator...
+            next_child = child.find(declarator_rule_name)
             if next_child is None:
-                name = child.find('declare:.').token.value
+                # We reached the "center" of the declarator!..
+                # We should find a variable name here, unless we are an
+                # abstract declarator, in which case we should find nothing.
+                # In either case, we're done parsing!
+                name_match = child.find('declare:.')
+                name = name_match and name_match.token.value
                 break
             child = next_child
 
-        suffix = innermost_match.find('declarator_suffix')
-        if is_bitfield:
-            # Our grammar should prevent there being a suffix
-            assert suffix is None
-            kind = 'bitfield'
-        elif suffix:
-            if suffix.pattern_name == 'array':
-                kind = 'array'
-            elif suffix.pattern_name == 'params':
-                kind = 'func'
-            else:
-                # Should never happen
-                raise ParseError(match.token, f"Unknown suffix: {suffix}")
-        elif innermost_match.find('pointer'):
-            kind = 'pointer'
-        else:
-            kind = None
+        # We appended to kinds while traversing the declarator from the
+        # "outside in", as it were; but we want the list of kinds to describe
+        # it from the inside out.
+        # E.g. we want ['pointer', 'array'] to mean pointer-to-array.
+        kinds.reverse()
 
         return Declarator(
             match=match,
             name=name,
-            kind=kind,
+            kinds=kinds,
         )
 
     def parse_declaration(self, match: ParseMatch) -> Declaration:

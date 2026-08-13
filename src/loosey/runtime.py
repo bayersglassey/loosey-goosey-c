@@ -169,8 +169,20 @@ def coerce_pointers_for_comparison(lhs: Value, rhs: Value) -> tuple[Value, Value
 class Declarator(NamedTuple):
     """E.g. `x` or `*x[]` or `**(*x[3])[][4]`, etc."""
     match: ParseMatch
-    name: str
-    kind: Optional[str] # None or 'pointer' or 'array' or 'func' or 'bitfield'
+    name: Optional[str]
+    kinds: list[str] # 'pointer' or 'array' or 'func' or 'bitfield'
+
+    @property
+    def is_abstract(self) -> bool:
+        # Abstract declarator, e.g. the `*` in `int f(int*)`
+        return self.name is None
+
+    @property
+    def kind(self) -> Optional[str]:
+        # The outermost kind... so like, given a variable defined using
+        # this declarator, does that variable hold an array?.. or a
+        # pointer?.. etc
+        return self.kinds[0] if self.kinds else None
 
 
 class InitDeclarator(NamedTuple):
