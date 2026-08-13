@@ -166,6 +166,9 @@ def value_as_bool(value: Value) -> bool:
     elif isinstance(value, Struct):
         # Struct behaves like 0 under arithmetic operations...
         return False
+    elif isinstance(value, Pointer):
+        # Non-NULL pointer is truthy
+        return True
     else:
         # E.g. Python strings should be interpreted as `const char *`,
         # so always truthy, even the empty string!..

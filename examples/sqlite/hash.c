@@ -103,6 +103,77 @@
       0x3:   'htsize': 0
       0x4:   'ht': 0
 
+    For fun, let's force some hash collisions!
+    >>> mini.eval(r"""
+    ...     // Add some entries using the original hash function
+    ...     sqlite3HashInsert(&h, "x", 888);
+    ...     sqlite3HashInsert(&h, "y", 999);
+    ...
+    ...     // Save the original hash function, then override it:
+    ...     void originalStrHash = strHash;
+    ...     int forcedHash = 100100;
+    ...     static unsigned int strHash(const char *z){ return forcedHash; }
+    ...     int sqlite3MallocSize(void *ptr) { return ptr.size; }
+    ...
+    ...     // Insert some entries, which should collide with each other
+    ...     sqlite3HashInsert(&h, "BAM!", 10);
+    ...     sqlite3HashInsert(&h, "BIFF", 20);
+    ...     int forcedHash = 200200; // Insert some entries with a different hash
+    ...     sqlite3HashInsert(&h, "BOOM", 30);
+    ...     sqlite3HashInsert(&h, "CRAASH", 40);
+    ...
+    ...     // Restore the original hash function
+    ...     strHash = originalStrHash;
+    ... """)
+
+    Now, what has happened is that our hash table now has some buckets,
+    pointing into the doubly-linked list.
+    The doubly-linked list still contains all the entries; the buckets
+    just make it easy to jump quickly to the first list element which
+    matches your hash:
+    >>> mini.eval(r"""
+    ...     printf("All entries:\n");
+    ...     HashElem *entry;
+    ...     for (entry = h.first; entry; entry = entry->next) {
+    ...         printf("  Entry: key=\"%s\", hash=%i\n", entry->pKey, entry->h);
+    ...     }
+    ...
+    ...     printf("The %i buckets and their first entries:\n", h.htsize);
+    ...     int i;
+    ...     for (i = 0; i < h.htsize; i++) {
+    ...         struct _ht *bucket = h.ht[i];
+    ...         if (!bucket->count) {
+    ...             printf("  Bucket %i: Empty!\n", i);
+    ...         } else {
+    ...             printf("  Bucket %i: count=%i, first entry=(key=\"%s\", hash=%i)\n",
+    ...                 i, bucket->count, bucket->chain->pKey, bucket->chain->h);
+    ...         }
+    ...     }
+    ... """)
+    All entries:
+      Entry: key="CRAASH", hash=200200
+      Entry: key="BOOM", hash=200200
+      Entry: key="x", hash=233590346968
+      Entry: key="y", hash=236244782729
+      Entry: key="BAM!", hash=100100
+      Entry: key="BIFF", hash=100100
+    The 15 buckets and their first entries:
+      Bucket 0: Empty!
+      Bucket 1: Empty!
+      Bucket 2: Empty!
+      Bucket 3: Empty!
+      Bucket 4: Empty!
+      Bucket 5: count=2, first entry=(key="BAM!", hash=100100)
+      Bucket 6: Empty!
+      Bucket 7: Empty!
+      Bucket 8: Empty!
+      Bucket 9: Empty!
+      Bucket 10: count=2, first entry=(key="CRAASH", hash=200200)
+      Bucket 11: Empty!
+      Bucket 12: Empty!
+      Bucket 13: count=1, first entry=(key="x", hash=233590346968)
+      Bucket 14: count=1, first entry=(key="y", hash=236244782729)
+
 */
 /*
 ** 2001 September 22
