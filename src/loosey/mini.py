@@ -195,6 +195,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     grammar_filename = GRAMMAR_FILENAME
     main_rule_name = 'repl_commands'
     squash_children = True
+    eval_empty_ok = True
     pass_through_exceptions = (
         Return,
         Continue,
@@ -293,16 +294,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def globals(self) -> dict[str, Value]:
         return {name: ptr.contents
             for name, ptr in self.global_scope.items()}
-
-    def no_match(self, tokens: list[Token], rule_name: str) -> Optional[ParseMatch]:
-        if not tokens:
-            # If we got no tokens from parsing, that might mean e.g. that
-            # user hit Enter at the REPL without typing anything, or that
-            # they entered some valid C preprocessor stuff which didn't
-            # generate any tokens, like a #define.
-            # That's all good!
-            return None
-        return super().no_match(tokens, rule_name)
 
     def enter_typedef_block(self, token: Token):
         self.typedef_blocks.append(set())
@@ -1813,7 +1804,6 @@ def main():
             args.filename,
             verbose=args.verbose,
             partial=args.partial,
-            raise_on_no_match=True,
         )
         if not args.parse_silent:
             # Handy if you want to see the parser's verbose output, but not

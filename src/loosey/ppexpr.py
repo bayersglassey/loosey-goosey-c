@@ -177,39 +177,27 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
         >>> evaluator.eval('* 2')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Invalid expression: * 2
+        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here
 
         >>> evaluator.eval('2 *')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Invalid expression: 2 *
+        loosey.pplex.ParseError: <fakefile>:1:3: Parsed up to here
 
         >>> evaluator.eval('(')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Invalid expression: (
+        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here
 
         >>> evaluator.eval(')')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Invalid expression: )
+        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here
 
     """
 
     grammar_filename = GRAMMAR_FILENAME
     squash_children = True
-
-    def no_match(self, tokens: list[Token], rule_name: str) -> Optional[ParseMatch]:
-        # TODO: need to get enough info back from GrammarParser that we
-        # can show a decent error message here...
-        # Example from GCC:
-        #
-        #   $ echo -e '#if ++x\nOK\n#endif' | cpp -P
-        #   <stdin>:1:5: error: token "++" is not valid in preprocessor expressions
-        #
-        first_token = tokens[0] if tokens else None
-        tokens_s = ' '.join(token.value for token in tokens)
-        raise ParseError(first_token, f"Invalid expression: {tokens_s}")
 
     def on_expression(self, match: ParseMatch) -> int:
         # Comma operator, value is that of last argument

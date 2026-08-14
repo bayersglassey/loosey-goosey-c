@@ -232,66 +232,16 @@
 
     [X] Support enums
 
-    [ ] I suspect we should give up on supporting arbitrary Python values,
-        unless we always conceptually wrap them in `void*`.
-        So for instance, in C the behaviour of `+` and `[...]` is linked,
-        so that `x[3] == (x + 3)[0]` must always be true.
-        If `x` is a Python list or str, that guarantee is gone.
-        However, the idea of `d->["x"]` in C being equivalent to `d['x']`
-        in Python if d is a dict, I believe still works if we think of d
-        as being a `void*` in C.
-        In other words: field access and calls are ok, indexing and addition
-        are not!
-
-    [ ] Better run-time error messages!..
-        But see also the TODO about better parsing error messages, which might
-        be good to do first...
-
-    [ ] Implement string.h (especially memset, memcpy, etc)
-        ...but probably we need to figure out how we're doing strings first,
-        see the relevant TODO... like we should probably use bytes everywhere,
-        not str, etc...
-
-        Are we ok to use int, or should we implement a Char which is like an
-        int, but with wrapping?.. probably...
-        => Ok, now we have src/loosey/intwrap.py, shall we use it?..
-
-        See also: notes/strings_and_bytes.txt
-
-    [ ] Rename "index" to "offset" in Pointer and MemoryBlock?..
-        Rename MemoryBlock -> AutoGrowMemoryBlock, and
-        BaseMemoryBlock -> MemoryBlock?..
-
-    [ ] Add a Token to structs and memory blocks, for debugging purposes.
-
-        [X] Also, replace e.g. Struct(x=1, y=2) with Struct({'x': 1, 'y': 2})
-            ...so we can have Struct({...}, token=...)
-
-    [ ] Support multiple call stacks!.. just in case we ever want to have
-        threads etc.
-        I think we would need to factor CallStack out of MiniC, and CallStack
-        should be a GrammarEvaluator... maybe?
-        But some parts of MiniC should presumably stay centralized, like
-        the preprocessor (and therefore parsing?) and globals and stuff.
-        So... what's in CallStack, then?.. mini.scopes, get_var, set_var...
-
-    [ ] Do we need to support multiple translation units?.. currently MiniC
-        has a single preprocessor, and so can only really represent a single
-        translation unit.
-        Look at `extern` and `static`. Maybe we have a truly global scope,
-        and then a translation-unit-level scope beneath it, and then function
-        call scopes under that...
-
-    [ ] Parsing needs better error messages!..
+    [X] Parsing needs better error messages!..
         I think we can probably use a concept of "longest/deepest successful
         partial parse", like assume that was going to be what it was supposed
         to be...
         Added GrammarParser.get_parse_error, but it's not amazing...
 
-        [ ] I think what we mostly need is to keep a stack of matches so far,
+        [-] I think what we mostly need is to keep a stack of matches so far,
             so we can reconstruct what we recently parsed...
 
-        [ ] I think one thing we can do is less backtracking?.. so like, if
+        [-] I think one thing we can do is less backtracking?.. so like, if
             we're parsing `int x` and we don't yet know whether it's gonna
             be a declaration or an expression, I believe once we see `int`
             we know we must be in a declaration, so we don't have to check
@@ -325,11 +275,65 @@
 
             Freaking K&R C, man!..
 
+        [X] TURNS OUT, we mostly had what we needed. Just doing partial match
+            by default, and then deciding if it's partial to raise an
+            exception. Easy peasy.
+
+    [ ] I suspect we should give up on supporting arbitrary Python values,
+        unless we always conceptually wrap them in `void*`.
+        So for instance, in C the behaviour of `+` and `[...]` is linked,
+        so that `x[3] == (x + 3)[0]` must always be true.
+        If `x` is a Python list or str, that guarantee is gone.
+        However, the idea of `d->["x"]` in C being equivalent to `d['x']`
+        in Python if d is a dict, I believe still works if we think of d
+        as being a `void*` in C.
+        In other words: field access and calls are ok, indexing and addition
+        are not!
+
+    [ ] Better run-time error messages!..
+        But see also the TODO about better parsing error messages, which might
+        be good to do first...
+        => Ok, we've got some better parsing errors now!
+
+        [ ] Add a Token to structs and memory blocks, for debugging purposes.
+
+            [X] Also, replace e.g. Struct(x=1, y=2) with Struct({'x': 1, 'y': 2})
+                ...so we can have Struct({...}, token=...)
+
+    [ ] Implement string.h (especially memset, memcpy, etc)
+        ==> We've started to do this, some parts in Python (CStdlib class)
+        and some in C (data/includes/string.c)
+
+    [ ] Rename "index" to "offset" in Pointer and MemoryBlock?..
+        Rename MemoryBlock -> AutoGrowMemoryBlock, and
+        BaseMemoryBlock -> MemoryBlock?..
+
+    [ ] Support multiple call stacks!.. just in case we ever want to have
+        threads etc.
+        I think we would need to factor CallStack out of MiniC, and CallStack
+        should be a GrammarEvaluator... maybe?
+        But some parts of MiniC should presumably stay centralized, like
+        the preprocessor (and therefore parsing?) and globals and stuff.
+        So... what's in CallStack, then?.. mini.scopes, get_var, set_var...
+
+    [ ] Do we need to support multiple translation units?.. currently MiniC
+        has a single preprocessor, and so can only really represent a single
+        translation unit.
+        Look at `extern` and `static`. Maybe we have a truly global scope,
+        and then a translation-unit-level scope beneath it, and then function
+        call scopes under that...
+
     [ ] Support conversion to/from bytes.
-        Use bytearray!
+        Use bytearray?..
         See also: MiniC.on_cast__cast_expression
 
-        [ ] Support strings... my_string[...] should find a NUL byte at the end
+        Are we ok to use int, or should we implement a Char which is like an
+        int, but with wrapping?.. probably...
+        => Ok, now we have src/loosey/intwrap.py, shall we use it?..
+
+        See also: notes/strings_and_bytes.txt
+
+        [X] Support strings... my_string[...] should find a NUL byte at the end
             of Python str/bytes objects...
 
             Probably string literals should be turned into Python bytes, not str?..

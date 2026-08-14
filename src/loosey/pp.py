@@ -1311,13 +1311,14 @@ class GrammarEvaluatorWithPreprocessor(GrammarEvaluator):
         ...     grammar_rules = rules
         ...     main_rule_name = 'value'
         ...     squash_children = True
+        ...     eval_empty_ok = True
         ...     def on_value(self, match):
         ...         return int(match.token.value)
         ...     def on_array(self, match):
         ...         return [self.on(child) for child in match.children]
 
         >>> evaluator = ValueEvaluator()
-        >>> evaluator.parse('''
+        >>> evaluator.eval('''
         ...     #define DOUBLE(X) X, X
         ...     #define SOME_MACRO
         ... ''')

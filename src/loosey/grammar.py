@@ -788,7 +788,7 @@ class GrammarParser:
               1
               2
 
-            >>> GrammarParser(rules, '(1 + (2 +').fullmatch(raise_on_no_match=True)
+            >>> GrammarParser(rules, '(1 + (2 +').fullmatch()
             Traceback (most recent call last):
              ...
             loosey.pplex.ParseError: <fakefile>:1:9: Parsed up to here
@@ -802,8 +802,20 @@ class GrammarParser:
         token = self.tokens[self.longest_match.token_i]
         return ParseError(token, msg or "Parsed up to here")
 
+    def is_full_match(self, match: Optional[ParseMatch]) -> bool:
+        if match is None:
+            # No match at all!
+            return False
+        if match.token_i + match.n_tokens < len(self.tokens):
+            # Only a partial match
+            return False
+        return True
+
     def fullmatch(self, **kwargs) -> Optional[ParseMatch]:
-        return self.match_rule(full=True, **kwargs)
+        match = self.match_rule(**kwargs)
+        if not self.is_full_match(match):
+            raise self.get_parse_error()
+        return match
 
     def increase_match_depth(self):
         self.match_depth += 1
@@ -817,9 +829,6 @@ class GrammarParser:
             self,
             rule_name: Optional[str] = None,
             token_i: int = 0,
-            *,
-            full: bool = False,
-            raise_on_no_match: bool = False,
             ) -> Optional[ParseMatch]:
         if rule_name is None:
             if self.main_rule_name is None:
@@ -835,17 +844,9 @@ class GrammarParser:
                 match = self.match_pattern(rule_name, pattern_i, token_i)
                 if match is not None:
                     # Hooray, we matched one of this rule's patterns
-                    if full and match.token_i + match.n_tokens != len(self.tokens):
-                        # If user only wanted a full match, and we only have a
-                        # partial match, then it's no match at all!
-                        break
-                    # We have a match for the rule!
                     return match
             # No patterns matched, so the rule doesn't match!
-            if raise_on_no_match:
-                raise self.get_parse_error()
-            else:
-                return None
+            return None
         finally:
             self.decrease_match_depth()
 
@@ -1075,16 +1076,17 @@ class GrammarEvaluator:
         >>> evaluator.eval('[1, 2, [-3, -4]]')
         [1, 2, [-3, -4]]
 
-        >>> evaluator.eval('1 2 3')
+        >>> evaluator.eval('[1, 2] 3')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Couldn't parse as: value
+        loosey.pplex.ParseError: <fakefile>:1:6: Parsed up to here
 
     """
 
     grammar_filename: Optional[str] = None
     main_rule_name: Optional[str] = None
     squash_children: bool = False
+    eval_empty_ok: bool = False
 
     pattern_callbacks: dict[PatternCallbackKey, tuple[PatternEnterCallback, PatternExitCallback]] = None
     toktype_predicates: dict[str, TokenPredicate] = None
@@ -1166,7 +1168,7 @@ class GrammarEvaluator:
             *,
             verbose: bool = False,
             partial: bool = False,
-            raise_on_no_match: bool = False,
+            empty_ok: bool = False,
             max_match_depth: Optional[int] = None,
             ) -> Optional[ParseMatch]:
         tokens = self.coerce_tokens(tokens)
@@ -1179,17 +1181,13 @@ class GrammarEvaluator:
             verbose=verbose,
             max_match_depth=max_match_depth,
         )
-        return parser.match_rule(
-            rule_name or self.main_rule_name,
-            full=not partial,
-            raise_on_no_match=raise_on_no_match,
-        )
-
-    def no_match(self, tokens: list[Token], rule_name: str) -> Optional[ParseMatch]:
-        # NOTE: subclasses may want to override this method with custom
-        # error message, or to return a value instead of raising an exception
-        first_token = tokens[0] if tokens else None
-        raise ParseError(first_token, f"Couldn't parse as: {rule_name}")
+        match = parser.match_rule(rule_name or self.main_rule_name)
+        if match and (partial or parser.is_full_match(match)):
+            return match
+        elif empty_ok and match is None:
+            return None
+        else:
+            raise parser.get_parse_error()
 
     def eval_file(self, filename: str, rule_name: Optional[str] = None, **kwargs):
         lines = tokenize_file(filename)
@@ -1199,12 +1197,8 @@ class GrammarEvaluator:
     def eval(self, tokens: list[Token] | str, rule_name: Optional[str] = None):
         tokens = self.coerce_tokens(tokens)
         rule_name = rule_name or self.main_rule_name
-        match = self.parse(tokens, rule_name)
-        if match is None:
-            # NOTE: this may return a ParseMatch, or None, or raise
-            # ParseError, etc... it's up to subclasses to decide
-            return self.no_match(tokens, rule_name)
-        return self.on(match)
+        match = self.parse(tokens, rule_name, empty_ok=self.eval_empty_ok)
+        return None if match is None else self.on(match)
 
     def default(self, match: ParseMatch):
         # NOTE: subclasses may want to override this method
@@ -1272,11 +1266,11 @@ def main():
         squash_children=args.squash_children,
     )
     rule_name = args.rule_name or parser.main_rule_name
-    match = parser.match_rule(rule_name, full=not args.partial)
-    if match is None:
-        print("No match!")
-    else:
+    match = parser.match_rule(rule_name)
+    if match and (args.partial or parser.is_full_match(match)):
         match.pprint()
+    else:
+        raise parser.get_parse_error()
 
 
 if __name__ == '__main__':
