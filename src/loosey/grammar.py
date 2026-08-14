@@ -22,7 +22,11 @@ from loosey import get_data_filepath
 from loosey.pplex import Token, Lexer, ParseError, tokenize_file
 
 
-RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|\)[?*]|[a-z][a-z0-9_]*:?|[A-Z][A-Z0-9_]*|'[^']+'|.")
+RULE_TOKEN_REGEX = re.compile(r" +|\n|#[^\n]*|\)[?*]|[a-z][a-z0-9_]*:?|[A-Z][A-Z0-9_]*|'[^']+'|![a-z_]+|.")
+RULE_ATTRS = (
+    # sparkly: totally useless, just for testing the 'rule attributes' concept
+    'sparkly',
+)
 RULE_NAME_CHARS = ascii_lowercase + '_'
 TOKTYPE_CHARS = ascii_uppercase + '_'
 
@@ -98,9 +102,12 @@ class GrammarPattern(NamedTuple):
 class GrammarRule(NamedTuple):
     name: str
     patterns: list[GrammarPattern]
+    attrs: list[str] # see ATTRS
 
     def pprint(self):
         print(self.name)
+        for attr in self.attrs:
+            print(f'    !{attr}')
         for i, pattern in enumerate(self.patterns):
             print('    | ' + pattern.prettystring())
         print('    ;')
@@ -127,6 +134,7 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
         >>> rules = parse_rules('''
         ...
         ...     value
+        ...         !sparkly
         ...         | NUMBER
         ...         | negative: '-' value
         ...         | bool: [ 'true' 'false' ]
@@ -141,6 +149,7 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
 
         >>> for name, rule in rules.items(): rule.pprint()
         value
+            !sparkly
             | NUMBER
             | negative: '-' value
             | bool: [ 'true' 'false' ]
@@ -212,7 +221,11 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
                 # Start a new rule definition
                 if token in rules:
                     raise error(f"Duplicate definition for rule: {token!r}")
-                rule = rules[token] = GrammarRule(name=token, patterns=[])
+                rule = rules[token] = GrammarRule(
+                    name=token,
+                    patterns=[],
+                    attrs=[],
+                )
             else:
                 raise unexpected(token)
         elif pattern_parts is None:
@@ -223,6 +236,11 @@ def parse_rules(text: str, filename: str = '<fakefile>') -> dict[str, GrammarRul
                 pattern_stack = []
             elif c == ';':
                 raise error(f"Rule has no patterns: {rule.name}")
+            elif c == '!':
+                attr = token[1:]
+                if attr not in RULE_ATTRS:
+                    raise error(f"Unrecognized rule attribute: {attr}")
+                rule.attrs.append(attr)
             else:
                 raise unexpected(token)
         else:
