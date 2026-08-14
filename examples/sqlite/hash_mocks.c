@@ -5,8 +5,8 @@
 void *sqlite3Malloc(int size) {
     return malloc(size);
 }
-int sqlite3MallocSize(int size) {
-    return 1;
+int sqlite3MallocSize(void *ptr) {
+    return ptr.size;
 }
 void sqlite3_free(void *ptr) {}
 void sqlite3BeginBenignMalloc(void) {}

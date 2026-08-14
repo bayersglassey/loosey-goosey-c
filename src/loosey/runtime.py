@@ -31,7 +31,14 @@ Value = Any
 _SEQUENCE_TYPES = (str, bytes, list, tuple, bytearray)
 
 
-def pprint_value(value: Value, *, dots=False, **print_kwargs):
+def pprint_value(value: Value,
+        *,
+        dots=False,
+        max_depth: Optional[int] = 10,
+        max_struct_entries: Optional[int] = None,
+        max_pointer_entries: Optional[int] = 50,
+        print_kwargs={},
+        ):
     r"""Pretty-prints a C value
 
         >>> pprint_value(1)
@@ -130,15 +137,24 @@ def pprint_value(value: Value, *, dots=False, **print_kwargs):
             address += 1
             print(print_prefix + msg, **print_kwargs)
         if isinstance(value, Struct):
+            if max_depth is not None and depth >= max_depth:
+                print_line("...etc")
+                return
             visited_address = visited.get(id(value))
             if visited_address is not None:
                 print_line(f"Struct at {hex(visited_address)}")
             else:
                 visited[id(value)] = address
                 print_line("Struct:")
-                for field_name, field_value in value.items():
+                for i, (field_name, field_value) in enumerate(value.items()):
+                    if max_struct_entries is not None and i >= max_struct_entries:
+                        print_line("...etc", depth + 1, None)
+                        break
                     visit(field_value, depth + 1, field_name)
         elif isinstance(value, Pointer):
+            if max_depth is not None and depth >= max_depth:
+                print_line("...etc")
+                return
             visited_address = visited.get(id(value.mem))
             if visited_address is not None:
                 print_line(f"Pointer (offset={value.index}) into memory at {hex(visited_address)}")
@@ -149,7 +165,10 @@ def pprint_value(value: Value, *, dots=False, **print_kwargs):
                     for mem_index, mem_value in value.mem.items())
                 if all_int:
                     print_line(f"As a C string: {value.as_c_string()}", depth + 1, key=None)
-                for mem_index, mem_value in value.mem.items():
+                for i, (mem_index, mem_value) in enumerate(value.mem.items()):
+                    if max_pointer_entries is not None and i >= max_pointer_entries:
+                        print_line("...etc", depth + 1, None)
+                        break
                     visit(mem_value, depth + 1, mem_index)
         else:
             print_line(repr(value))
@@ -596,8 +615,8 @@ class Struct:
     def __iter__(self):
         return iter(self.fields)
 
-    def pprint(self):
-        pprint_value(self)
+    def pprint(self, **kwargs):
+        pprint_value(self, **kwargs)
 
     def items(self) -> Iterator[tuple[str, Value]]:
         for attr, ptr in self.fields.items():
@@ -1052,8 +1071,8 @@ class Pointer:
         self.__dict__['mem'] = mem
         self.__dict__['index'] = index
 
-    def pprint(self):
-        pprint_value(self)
+    def pprint(self, **kwargs):
+        pprint_value(self, **kwargs)
 
     @property
     def min_index(self) -> int:

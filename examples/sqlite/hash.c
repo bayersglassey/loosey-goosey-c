@@ -113,7 +113,6 @@
     ...     void originalStrHash = strHash;
     ...     int forcedHash = 100100;
     ...     static unsigned int strHash(const char *z){ return forcedHash; }
-    ...     int sqlite3MallocSize(void *ptr) { return ptr.size; }
     ...
     ...     // Insert some entries, which should collide with each other
     ...     sqlite3HashInsert(&h, "BAM!", 10);
