@@ -87,8 +87,8 @@ If you refer to uninitialized memory, you generally get an instance of Struct,
 which is a custom Python class which secretly adds fields to itself whenever
 you try to refer to them.
 
-The parser uses a heavily tweaked version of the ANSI C yacc grammar
-available online:
+The parser uses a heavily tweaked version of an ANSI C yacc grammar which
+I found online:
 * [ansi-c-grammar.txt](/src/loosey/data/ansi-c-grammar.txt)
 
 ...which is parsed and interpreted with a custom grammar library, which is
@@ -100,8 +100,8 @@ The interpreter's code lives here:
 
 There are fairly extensive tests, see:
 * Doctests throughout the Python code (and other places, like this README)
-* C tests in [minictests](/minictests), run with [minictests.sh](/minictests.sh)
-* Preprocessor tests in [pptests](/pptests), run with [pptests.sh](/pptests.sh)
+* C tests in [minictests/](/minictests), run with [minictests.sh](/minictests.sh)
+* Preprocessor tests in [pptests/](/pptests), run with [pptests.sh](/pptests.sh)
 * All tests are kicked off by: [runtests.sh](/runtests.sh)
 
 The "roadmap" is this big ol' checklist:
@@ -144,8 +144,9 @@ add(x, y)
 5.0
 
 # Using Python objects, methods, etc from within mini-C:
-# (NOTE: all C types are currently ignored, so the "struct t *" here could
-# just as easily have been "int" or whatever)
+# NOTE: C types are currently ignored (except in initializer lists),
+# so the "struct t *" parameter could just as easily have been "int"
+# or whatever!
 >>> add_dict_keys = mini.eval("""
 ... int add_dict_keys(struct t *obj) {
 ...     return obj->get("x") + obj->get("y");
@@ -306,7 +307,8 @@ followed by expected output on subsequent lines:
 >>> x = 2
 >>> x + 4
 6
->>> for i in range(3): print(i)
+>>> for i in range(3):
+...     print(i)
 0
 1
 2
@@ -352,8 +354,9 @@ Got:
 ***Test Failed*** 1 failures.
 ```
 
-The approach is very simple: the doctest manually imports and instantiates
-the MiniC Python class, and uses it to evalute the C file.
+The approach for using this with C is very simple: the doctest manually
+imports and instantiates the MiniC Python class, and uses it to evalute
+the C file.
 (The file's path must be hardcoded in the doctest; it would be nice if there
 were a global variable called e.g. `__file__` with the path of the file
 currently being executed by doctest, AFAIK but there is not.)
