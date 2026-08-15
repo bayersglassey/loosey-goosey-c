@@ -50,27 +50,24 @@ const char *postfix_name[] = {"LPAREN", "RPAREN", "ALTERN", "CONCAT", "KLEENE"};
     >>> mini.eval_file('examples/regexp-bytecode.c')
     main()
 
-    >>> mini.eval('dump_prepared(prepare("a(b|c|\\n)*d"))')
+    >>> mini.eval('dump_prepared(prepare("a(b|c)*d"))')
      0: 'a'
      1: LPAREN
      2: 'b'
      3: ALTERN
      4: 'c'
-     5: ALTERN
-     6: '
-    '
-     7: RPAREN
-     8: KLEENE
-     9: CONCAT
-    10: 'd'
-    11: RPAREN
+     5: RPAREN
+     6: KLEENE
+     7: CONCAT
+     8: 'd'
+     9: RPAREN
 
     ...note the trailing RPAREN, which corresponds to end-of-pattern, not
     to a ')' in the input.
 
     Also note that there is only one CONCAT, corresponding to the
-    concatenation of "a(b|c|\\n)*" and "d"; there is none corresponding to
-    the concatenation of "a" and "(b|c|\\n)*".
+    concatenation of "a(b|c)*" and "d"; there is none corresponding to
+    the concatenation of "a" and "(b|c)*".
     This is because concatenation is implicit whenever a '(' is encountered.
 
 */
