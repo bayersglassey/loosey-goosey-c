@@ -346,13 +346,17 @@ class InitDeclarator(NamedTuple):
     def name(self) -> str:
         return self.declarator.name
 
-    @property
-    def kind(self) -> str:
-        return self.declarator.kind
 
-
-# The str of a base type is 'builtin', 'enum', 'struct', 'union', or 'typedef'
+# The str of a base type is 'builtin', 'type_name', 'enum', 'struct', or 'union'
 BaseType = tuple[str, Any]
+def base_type_repr(base_type: BaseType) -> str:
+    base_type, arg = base_type
+    if base_type == 'builtin':
+        return ' '.join(arg)
+    elif base_type == 'type_name':
+        return f'type_name {arg}'
+    else:
+        return base_type
 
 
 class Declaration:
@@ -364,6 +368,9 @@ class Declaration:
         # These might be init declarators, or field declarators...
         self.init_declarators = init_declarators
 
+        # This property does some validation, possibly raising ParseError
+        self.base_type
+
     @cached_property
     def declspec(self) -> ParseMatch:
         # The declaration specifiers, e.g. `int` or `const int` or `struct T`
@@ -371,21 +378,39 @@ class Declaration:
 
     @cached_property
     def base_type(self) -> BaseType:
-        builtins = []
+        base_type = None
+        def check_base_type(new_base_type: str):
+            if base_type is not None:
+                raise ParseError(child.token,
+                    f"Multiple base types: {base_type_repr(base_type)} and {new_base_type}")
         for child in self.declspec.children:
             if child.rule_name == 'struct_or_union_specifier':
                 struct_or_union = child.children[0].token.value
-                return (struct_or_union, child)
+                check_base_type(struct_or_union)
+                base_type = (struct_or_union, child)
             elif child.rule_name == 'enum_specifier':
-                return ('enum', child)
+                check_base_type('enum')
+                base_type = ('enum', child)
             elif child.pattern_name == 'builtin':
-                builtins.append(child.token.value)
-            elif child.pattern_name == 'typedef':
-                return ('typedef', child.token.value)
-        if not builtins:
-            # We should never get here
+                if base_type is None:
+                    builtins = [child.token.value]
+                    base_type = ('builtin', builtins)
+                elif base_type[0] != 'builtin':
+                    # This will raise ParseError
+                    check_base_type('builtin')
+                else:
+                    builtins.append(child.token.value)
+            elif child.pattern_name == 'type_name':
+                # i.e. a reference to a typedef
+                check_base_type(child.token.value)
+                base_type = ('type_name', child.token.value)
+        if base_type is None:
             raise ParseError(self.match.token, "Couldn't find base type")
-        return ('builtin', builtins)
+        return base_type
+
+    @cached_property
+    def base_type_repr(self) -> str:
+        return base_type_repr(self.base_type)
 
     @cached_property
     def specifiers(self) -> set[str]:
@@ -398,8 +423,17 @@ class Declaration:
     @cached_property
     def is_typedef(self) -> bool:
         # This means we *are* a typedef, not that we *refer* to one
-        # (As opposed to when self.base_type[0] == 'typedef')
+        # (As opposed to when self.base_type[0] == 'type_name')
         return 'typedef' in self.specifiers
+
+    def pprint(self):
+        print(f"{self.base_type_repr}({', '.join(self.specifiers)}):")
+        for init_declarator in self.init_declarators:
+            declarator = init_declarator.declarator
+            msg = f"  {declarator.name}({', '.join(declarator.kinds)})"
+            if init_declarator.initializer:
+                msg += ' = <init>'
+            print(msg)
 
 
 class CTagged:
@@ -463,8 +497,9 @@ class CStructlike(CTagged):
                 parts = []
                 for init_declarator in declaration.init_declarators:
                     part = init_declarator.name
-                    if init_declarator.kind:
-                        part = f'{part}({init_declarator.kind})'
+                    kind = init_declarator.declarator.kind
+                    if kind:
+                        part = f'{part}({kind})'
                     parts.append(part)
                 msg = ', '.join(parts)
                 if declaration.specifiers:

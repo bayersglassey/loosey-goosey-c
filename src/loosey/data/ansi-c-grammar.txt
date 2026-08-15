@@ -149,7 +149,7 @@ type_specifier
     | builtin: [ 'void' 'char' 'short' 'int' 'long' 'float' 'double' 'signed' 'unsigned' '_Bool' ]
     | struct_or_union_specifier
     | enum_specifier
-    | typedef: TYPE_NAME
+    | type_name: TYPE_NAME
     ;
 
 type_qualifier
@@ -158,11 +158,12 @@ type_qualifier
 
 declaration_specifier
     | storage_class_specifier
-    | type_specifier
     | type_qualifier
+    | type_specifier
     ;
 
 declaration_specifiers
+    # NOTE: this rule is used for TYPE_NAME guessing
     | declspec: declaration_specifier ( declaration_specifier )*
     ;
 
@@ -191,8 +192,8 @@ struct_or_union_or_enum_tag
     ;
 
 specifier_qualifier
-    | type_specifier
     | type_qualifier
+    | type_specifier
     ;
 
 direct_bitfield_declarator
@@ -206,6 +207,7 @@ field_declarator
     ;
 
 field_declaration_specifiers
+    # NOTE: this rule is used for TYPE_NAME guessing
     | declspec: specifier_qualifier ( specifier_qualifier )*
     ;
 
@@ -301,6 +303,8 @@ parameter_declaration
     ;
 
 type_name
+    # Used by type cast and sizeof
+    # NOTE: this rule is used for TYPE_NAME guessing
     | specifier_qualifier ( specifier_qualifier )* ( abstract_declarator )?
     ;
 
@@ -310,6 +314,9 @@ statement
     | selection_statement
     | iteration_statement
     | jump_statement
+    # TODO: decide whether it's any better to check for declaration before
+    # expression...
+    | declaration
     | expression_statement
     ;
 
@@ -322,15 +329,11 @@ labeled_statement
     ;
 
 compound_statement
-    | block:  '{' ( declaration_list )? ( statement_list )? '}'
+    | block:  '{' ( statement )* '}'
     ;
 
 declaration_list
     | declaration ( declaration )*
-    ;
-
-statement_list
-    | statement ( statement )*
     ;
 
 empty_expression_statement
@@ -398,7 +401,6 @@ external_declaration
 
 repl_command
     | function_definition
-    | declaration
     | statement
     ;
 

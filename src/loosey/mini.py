@@ -1,3 +1,4 @@
+import os
 import sys
 import inspect
 from typing import Optional
@@ -45,6 +46,10 @@ from loosey.runtime import (
 
 NO_DEFAULT = object()
 
+TYPE_NAME_GUESSING = (
+    os.environ.get('LOOSEY_TYPE_NAME_GUESSING', '0').lower()
+    in ('1', 'true'))
+
 GRAMMAR_FILENAME = get_data_filepath('ansi-c-grammar.txt')
 
 Initializer = Value | list['Initializer']
@@ -62,6 +67,26 @@ BINARY_EXPRESSION_OPS = {
     'logical_and_expression': '&&',
     'logical_or_expression': '||',
 }
+
+
+class _TypeNameGuessScope:
+    found_base_type: bool = False
+    type_name: Optional[str] = None
+
+DEBUG_TYPE_NAME_GUESSING = False
+@contextmanager
+def debug_type_name_guessing():
+    """Use this when you want to debug type name guessing for a specific
+    block of code"""
+    global DEBUG_TYPE_NAME_GUESSING
+    original = DEBUG_TYPE_NAME_GUESSING
+    DEBUG_TYPE_NAME_GUESSING = True
+    try:
+        yield
+    except Exception as ex:
+        print(ex)
+    finally:
+        DEBUG_TYPE_NAME_GUESSING = original
 
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
@@ -104,53 +129,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         >>> mini.eval('#define DOUBLE(X) X + X')
         >>> mini.eval('int x = DOUBLE(3);')
         {'x': 6}
-
-        Parsing of typedefs is handled correctly!
-        See: https://en.wikipedia.org/wiki/Lexer_hack
-        In the examples below, when Integer is not a typedef, `Integer *x`
-        is interpreted as a multiplication; when it's a typedef, `Integer *x`
-        is interpreted as a variable declaration:
-        >>> f = mini.eval('void f() { Integer *x; }')
-        >>> for child in f.body.children: child.pprint()
-        multiplicative_expression
-          ident: Integer
-          *
-          ident: x
-        >>> f = mini.eval('void f() { typedef int Integer; Integer *x; }')
-        >>> for child in f.body.children: child.pprint()
-        declaration_list
-          decl: declaration
-            declspec: declaration_specifiers
-              typedef
-              builtin: int
-            decl: init_declarator
-              decl: declarator
-                declare: Integer
-          decl: declaration
-            declspec: declaration_specifiers
-              typedef: Integer
-            decl: init_declarator
-              decl: declarator
-                pointer: *
-                declare: x
-
-        Similarly, if we evaluate a typedef, it exists in our globals, and
-        is taken into account when parsing:
-        >>> mini.parse('T *x;').pprint()
-        multiplicative_expression
-          ident: T
-          *
-          ident: x
-        >>> mini.eval('typedef struct t T;')
-        {'T': TypeDef('T')}
-        >>> mini.parse('T *x;').pprint()
-        decl: declaration
-          declspec: declaration_specifiers
-            typedef: T
-          decl: init_declarator
-            decl: declarator
-              pointer: *
-              declare: x
 
     Accessing attributes and methods of Python objects:
 
@@ -205,8 +183,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     )
     handler_prefixes = ('reference',)
 
-    def __init__(self, **kwargs):
+    def __init__(self,
+            *,
+            type_name_guessing: bool = TYPE_NAME_GUESSING,
+            **kwargs):
         super().__init__(**kwargs)
+
+        self.type_name_guessing = type_name_guessing
 
         # Define some default macros, which GCC seems to define on my system
         self.pp.execute('#define __restrict')
@@ -240,8 +223,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # See: https://en.wikipedia.org/wiki/Lexer_hack
         # Anyway, the typedef_blocks and related callbacks here are used to
         # handle that.
-        self.typedef_blocks: list[set[str]] = []
+        # Basically, when we enter/exit the parsing of a statement which
+        # introduces a new variable scope, we push/pop a "typedef block".
+        # Each typedef block just stores which variables it has seen to
+        # definitely be or not be typedefs.
+        self.typedef_blocks: list[dict[str, bool]] = []
         self.pattern_callbacks = {
+
+            # Enter/exit typedef blocks
             ('compound_statement', 'block'):
                 (self.enter_typedef_block, self.exit_typedef_block),
             ('selection_statement', 'if'):
@@ -254,9 +243,47 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 (self.enter_typedef_block, self.exit_typedef_block),
             ('iteration_statement', 'do'):
                 (self.enter_typedef_block, self.exit_typedef_block),
+
+            # Other stuff
             ('declaration', 'decl'):
                 (None, self.exit_declaration),
         }
+        self.toktype_predicates = {
+            'TYPE_NAME': self.is_type_name_token,
+        }
+
+        # If "type name guessing" is enabled, we register more parser
+        # callbacks.
+        # E.g. if we see `T x;`, we can infer that T must be a typedef.
+        # Thus we would set self.typedef_blocks[-1]['x'] = True.
+        # Similarly, from `int x;` we can infer that x is *not* a typedef.
+        # Thus we would set self.typedef_blocks[-1]['x'] = False.
+        # Etc...
+        self.type_name_guess_scopes: list[_TypeNameGuessScope] = []
+        if type_name_guessing:
+            self.pattern_callbacks.update({
+                # Enter/exit "type name guessing" scopes
+                ('declaration_specifiers', 'declspec'):
+                    (self.enter_type_name_guess_scope, self.exit_type_name_guess_scope),
+                ('field_declaration_specifiers', 'declspec'):
+                    (self.enter_type_name_guess_scope, self.exit_type_name_guess_scope),
+                ('type_name', None):
+                    (self.enter_type_name_guess_scope, self.exit_type_name_guess_scope),
+
+                # Found a non type name specifier
+                ('type_specifier', 'builtin'):
+                    (None, self.exit_type_specifier),
+                ('type_specifier', None):
+                    (None, self.exit_type_specifier),
+            })
+
+        self.parsed_declarators: dict[str, Declarator] = {}
+        self.parsed_declarations: dict[str, Declaration] = {}
+        self.parsed_structlikes: dict[str, CStructlike] = {}
+
+        self.validate_pattern_callbacks()
+
+    def validate_pattern_callbacks(self):
         for rule_name, pattern_name in self.pattern_callbacks:
             if rule_name not in self.grammar_rules:
                 raise Exception(f"Unknown rule name: {rule_name}")
@@ -264,21 +291,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 for pattern in self.grammar_rules[rule_name].patterns
             ):
                 raise Exception(f"Unknown pattern name for rule {rule_name}: {pattern_name}")
-        self.toktype_predicates = {
-            'TYPE_NAME': self.is_type_name_token,
-        }
-
-        self.parsed_declarators: dict[str, Declarator] = {}
-        self.parsed_declarations: dict[str, Declaration] = {}
-        self.parsed_structlikes: dict[str, CStructlike] = {}
 
     def parse(self, *args, **kwargs):
-        block = set()
-        self.typedef_blocks.append(block)
+        typedef_block = {}
+        for scope in self.scopes:
+            for name, ptr in scope.items():
+                typedef_block[name] = isinstance(ptr.contents, TypeDef)
+        self.typedef_blocks.append(typedef_block)
         try:
             return super().parse(*args, **kwargs)
         finally:
-            assert self.typedef_blocks.pop() is block
+            assert self.typedef_blocks.pop() is typedef_block
 
     def add_global(self, value, name):
         if inspect.isfunction(value):
@@ -296,35 +319,173 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             for name, ptr in self.global_scope.items()}
 
     def enter_typedef_block(self, token: Token):
-        self.typedef_blocks.append(set())
+        self.typedef_blocks.append({})
 
     def exit_typedef_block(self, token: Token, match: Optional[ParseMatch]):
         self.typedef_blocks.pop()
 
+    def enter_type_name_guess_scope(self, token: Token):
+        assert self.type_name_guessing
+        if DEBUG_TYPE_NAME_GUESSING:
+            print("ENTER GUESS SCOPE")
+        self.type_name_guess_scopes.append(_TypeNameGuessScope())
+
+    def exit_type_name_guess_scope(self, token: Token, match: Optional[ParseMatch]):
+        assert self.type_name_guessing
+        if DEBUG_TYPE_NAME_GUESSING:
+            print("EXIT GUESS SCOPE")
+        type_name_guess_scope = self.type_name_guess_scopes.pop()
+        if match and type_name_guess_scope.type_name:
+            if DEBUG_TYPE_NAME_GUESSING:
+                print(f"GUESSED: {type_name_guess_scope.type_name}")
+            self.typedef_blocks[-1][type_name_guess_scope.type_name] = True
+
     def exit_declaration(self, token: Token, match: Optional[ParseMatch]):
         if match is None:
             return
-        if not self.typedef_blocks:
-            return
+
+        # NOTE: technically, we should be marking names as being typedefs as
+        # soon as we've parsed *each individual declarator*, not the
+        # declaration as a whole!..
+        # E.g. the following is supposed to work:
+        #
+        #   typedef int
+        #     I,         // now I is a typedef for int
+        #     IF(I i);   // now IF is a typedef for functions int(int i)
+        #
+        # ...but that's crazy. I'm not gonna support that.
+        # Please tell me nobody actually does that.
         declaration = self.parse_declaration(match)
-        if not declaration.is_typedef:
-            return
         typedef_block = self.typedef_blocks[-1]
         for init_declarator in declaration.init_declarators:
-            typedef_block.add(init_declarator.name)
+            typedef_block[init_declarator.name] = declaration.is_typedef
+
+    def exit_type_specifier(self, token: Token, match: Optional[ParseMatch]):
+        assert self.type_name_guessing
+        if match is None:
+            return
+        if DEBUG_TYPE_NAME_GUESSING:
+            print(f"FOUND BASE TYPE: {token.value}")
+        type_name_guess_scope = self.type_name_guess_scopes[-1]
+        type_name_guess_scope.found_base_type = True
 
     def is_type_name_token(self, token: Token) -> bool:
+        """This method is registered as a callback for the parser, when it
+        needs to determine if the given token is of toktype 'TYPE_NAME'.
+        There is no such toktype, except for "virtually" based on the output
+        of this method!..
+        See also: https://en.wikipedia.org/wiki/Lexer_hack
+
+            >>> mini = MiniC()
+
+            In the examples below, when Integer is *not* a typedef,
+            `Integer *x` is interpreted as a multiplication; when it's a
+            typedef, `Integer *x` is interpreted as a variable declaration:
+
+            >>> mini.parse('Integer * x;').rule_name
+            'multiplicative_expression'
+
+            >>> mini.parse('typedef int Integer; Integer * x;').children[1].rule_name
+            'declaration'
+
+            Similarly, if we evaluate a typedef, it exists in our globals, and
+            is taken into account when parsing:
+            >>> mini.eval('typedef int Integer;')
+            {'Integer': TypeDef('Integer')}
+            >>> mini.parse('Integer * x;').rule_name
+            'declaration'
+
+        TYPE NAME GUESSING: when this is enabled, we attempt to infer when an
+        identifier must be a type name, even if we haven't seen an explicit
+        typedef declaration for it.
+
+            >>> mini = MiniC(type_name_guessing=True)
+
+            Here, T is clearly an identifier, not a type name:
+            >>> mini.parse_declaration(mini.parse('int T;')).pprint()
+            int():
+              T()
+
+            Here, T is clearly a type name:
+            >>> mini.parse_declaration(mini.parse('T t;')).pprint()
+            type_name T():
+              t()
+
+            Here, we have used T inconsistently.
+            It will be marked as an identifier, leading to a parse error for
+            the second declaration:
+            >>> mini.parse('int T; T t;')
+            Traceback (most recent call last):
+             ...
+            loosey.pplex.ParseError: <fakefile>:1:11: Parsed up to here ...
+
+            Here, we have the reverse inconsistency, where T is a type name:
+            >>> mini.parse_declaration(mini.parse('T t; int T;'))
+            Traceback (most recent call last):
+             ...
+            loosey.pplex.ParseError: <fakefile>:1:10: Multiple base types: int and T
+
+            Unfortunately, the way it's working at the moment, "type name
+            guessing" is pretty much unusable, because it's too eager... for
+            instance, a simple function call is interpreted as a type
+            declaration!..
+            >>> mini.parse('f(x);', 'statement').rule_name
+            'declaration'
+
+        """
+
+        # If the token is '3' or '+' or something, bail out
         if token.toktype != 'IDENTIFIER':
             return False
+
+        # Check if we know for sure whether name is or is not a typedef
         name = token.value
-        if self.typedef_blocks and any(
-            name in block for block in reversed(self.typedef_blocks)
-        ):
-            return True
-        elif isinstance(self.get_var(name, None), TypeDef):
-            return True
-        else:
+        if DEBUG_TYPE_NAME_GUESSING:
+            print(f"IS TYPE NAME? {name}")
+        for block in reversed(self.typedef_blocks):
+            if name in block:
+                if DEBUG_TYPE_NAME_GUESSING:
+                    print(f"IT'S OFFICIAL: {block[name]}")
+                is_type_name = block.get(name)
+                if is_type_name is not None:
+                    if is_type_name and self.type_name_guessing:
+                        type_name_guess_scope = self.type_name_guess_scopes[-1]
+                        type_name_guess_scope.found_base_type = True
+                        return True
+                    else:
+                        return is_type_name
+
+        # If we're not doing "type name guessing", return False, since we
+        # haven't an explicit declaration that this is a type name.
+        if not self.type_name_guessing:
             return False
+
+        # If we are in a "declspec" (declaration specifiers sequence, like
+        # `extern int` or `const T`), did we already find a base type (like
+        # `int` or `T`)?..
+        # If so, then subsequent identifiers can't be type names.
+        # So for instance, when parsing `int x`, we don't want to guess that
+        # `x` is a type name, because we already saw a base type `int`!
+        # Whereas in `extern T`, we're okay guessing that T is a type name,
+        # because `extern` is a storage class, not a base type.
+        # NOTE: we only look at the current "guess scope", just for simplicity
+        # and speed.
+        # Nested "guess scopes" are e.g. in `const struct { T t; int x; }`,
+        # where the struct definition is inside a "guess scope" but there is
+        # also a "guess scope" for each field declaration inside it.
+        type_name_guess_scope = self.type_name_guess_scopes[-1]
+        if type_name_guess_scope.found_base_type:
+            if DEBUG_TYPE_NAME_GUESSING:
+                print("CAN'T BE, WE ALREADY FOUND A BASE TYPE")
+            return False
+
+        # Let's try saying that this might be a type name, and see what
+        # happens!..
+        if DEBUG_TYPE_NAME_GUESSING:
+            print("SURE!")
+        type_name_guess_scope.found_base_type = True
+        type_name_guess_scope.type_name = name
+        return True
 
     @contextmanager
     def new_scope(self) -> dict[str, Pointer]:
@@ -941,7 +1102,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                         value = self._create_uninitialized_value(
                             init_declarator.declarator.match.token,
                             name,
-                            init_declarator.kind,
+                            init_declarator.declarator.kind,
                         )
                         self.declare_var(name, value)
                 intialized_values[name] = value
@@ -1021,7 +1182,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             # Expand typedefs
             kinds += declarator.kinds
             base_type, typedef_name = declaration.base_type
-            if base_type != 'typedef':
+            if base_type != 'type_name':
                 break
             typedef = self.get_var(typedef_name)
             declaration = typedef.declaration
@@ -1457,7 +1618,6 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             value = self.on(child)
         return value
 
-    on_statement_list = _eval_children
     on_translation_unit = _eval_children
     on_expression = _eval_children
     on_expression_statement = _eval_children

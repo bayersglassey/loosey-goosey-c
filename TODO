@@ -68,6 +68,8 @@
 
     [ ] Handle ## (pasting) operator
 
+    [ ] Handle string literal concatenation
+
     [ ] Fix our handling of includes!..
         See: notes/includes.txt
 
@@ -417,6 +419,9 @@
     of typedefs!..
 
 [ ] Add C99 support!.. where can we find a grammar for it?
+    Ah ha, updated to C11: https://www.quut.com/c/ANSI-C-grammar-y.html
+    Ooooh also: https://slebok.github.io/zoo/index.html#c_c99
+    And: https://github.com/antlr/grammars-v4/tree/master/c
 
 [ ] Look into making a bytecode... our current "dynamically evaluate the
     parse tree" approach is fun, and got us off the ground, but it's

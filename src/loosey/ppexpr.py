@@ -177,22 +177,22 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
         >>> evaluator.eval('* 2')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here
+        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here ...
 
         >>> evaluator.eval('2 *')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:3: Parsed up to here
+        loosey.pplex.ParseError: <fakefile>:1:3: Parsed up to here ...
 
         >>> evaluator.eval('(')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here
+        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here ...
 
         >>> evaluator.eval(')')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here
+        loosey.pplex.ParseError: <fakefile>:1:1: Parsed up to here ...
 
     """
 

@@ -578,8 +578,7 @@ _MatchResult = tuple[list[ParseMatch], int]
 
 
 class _LongestMatch(NamedTuple):
-    rule_name: str
-    pattern: GrammarPattern
+    matching_rule_names: tuple[str, ...]
     token_i: int
 
 
@@ -770,6 +769,7 @@ class GrammarParser:
         self.match_stack: list[ParseMatchKey] = []
         self.match_cache: dict[ParseMatchKey, Optional[ParseMatch]] = {}
 
+        self.matching_rule_names: list[str] = []
         self.longest_match: Optional[_LongestMatch] = None
 
     def get_parse_error(self, msg: Optional[str] = None) -> Optional[ParseError]:
@@ -791,16 +791,14 @@ class GrammarParser:
             >>> GrammarParser(rules, '(1 + (2 +').fullmatch()
             Traceback (most recent call last):
              ...
-            loosey.pplex.ParseError: <fakefile>:1:9: Parsed up to here
+            loosey.pplex.ParseError: <fakefile>:1:9: Parsed up to here (value -> value)
 
         """
-        if self.longest_match is None:
+        longest_match = self.longest_match
+        if longest_match is None:
             return ParseError(None, msg or "Not even a partial match!")
-        rule_name = self.longest_match.rule_name
-        rule = self.rules[rule_name]
-        pattern = self.longest_match.pattern
-        token = self.tokens[self.longest_match.token_i]
-        return ParseError(token, msg or "Parsed up to here")
+        token = self.tokens[longest_match.token_i]
+        return ParseError(token, msg or f"Parsed up to here ({' -> '.join(longest_match.matching_rule_names)})")
 
     def is_full_match(self, match: Optional[ParseMatch]) -> bool:
         if match is None:
@@ -837,6 +835,7 @@ class GrammarParser:
         if VERBOSITY_STYLE == 1 and self.verbose:
             print('. ' * self.match_depth + f"RULE: {rule_name}")
         rule = self.rules[rule_name]
+        self.matching_rule_names.append(rule_name)
         self.increase_match_depth()
         try:
             # Attempt to match against each of this rule's patterns
@@ -849,6 +848,7 @@ class GrammarParser:
             return None
         finally:
             self.decrease_match_depth()
+            assert self.matching_rule_names.pop() == rule_name
 
     def match_pattern(self, rule_name: str, pattern_i: int, token_i: int) -> Optional[ParseMatch]:
         rule = self.rules[rule_name]
@@ -933,8 +933,7 @@ class GrammarParser:
                             return None
                         if self.longest_match is None or token_i > self.longest_match.token_i:
                             self.longest_match = _LongestMatch(
-                                rule_name=rule_name,
-                                pattern=subpattern,
+                                matching_rule_names=tuple(self.matching_rule_names),
                                 token_i=token_i,
                             )
                         token = self.tokens[token_i]
@@ -1079,7 +1078,7 @@ class GrammarEvaluator:
         >>> evaluator.eval('[1, 2] 3')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:6: Parsed up to here
+        loosey.pplex.ParseError: <fakefile>:1:6: Parsed up to here (value -> array)
 
     """
 

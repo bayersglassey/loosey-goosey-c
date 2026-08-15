@@ -21,7 +21,6 @@
 #define SEEK_END 2
 
 typedef struct __loosey_file__ FILE;
-typedef unsigned size_t;
 typedef int fpos_t;
 
 extern FILE *stdin;
