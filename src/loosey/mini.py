@@ -1701,6 +1701,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                 except ControlFlow as ex:
                     raise ParseError(ex.match.token,
                         "Uncaught control flow: {ex.__class__.__name__}")
+                except ParseError as ex:
+                    ex.add_trace(func.match.token, f"While calling {func.name}...")
+                    raise
                 else:
                     break
 
@@ -2079,13 +2082,21 @@ def main():
             # the pprint of a successful match
             match.pprint()
     else:
-        mini.eval_file(args.filename)
+        try:
+            mini.eval_file(args.filename)
+        except ParseError as ex:
+            ex.pprint()
+            sys.exit(1)
         main_func = mini.globals().get('main')
         if main_func is None:
             raise Exception("No main() function found!")
         progname = args.progname or (args.filename if args.filename != '-' else 'main')
         argv = [progname] + args.main_args
-        retcode = main_func(len(argv), argv)
+        try:
+            retcode = main_func(len(argv), argv)
+        except ParseError as ex:
+            ex.pprint()
+            sys.exit(1)
         if retcode is None:
             retcode = 0
         elif not isinstance(retcode, int):

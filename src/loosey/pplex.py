@@ -206,7 +206,7 @@ class Token(NamedTuple):
 
 class ParseError(Exception):
 
-    def __init__(self, token: Optional[Token], msg):
+    def __init__(self, token: Optional[Token], msg: str):
         if token is not None and not isinstance(token, Token):
             # E.g. if we got a ParseMatch by accident
             token = token.token
@@ -215,22 +215,28 @@ class ParseError(Exception):
         # The one case I know we need to support is when we're trying to
         # tokenize a file which consists of a single backslash. O_o
         location = 'unknown' if token is None else token.location()
-        msg = f"{location}: {msg}"
+        fullmsg = f"{location}: {msg}"
+        Exception.__init__(self, fullmsg)
 
-        # Experimental, probably too much info...
-        INCLUDE_PARENTS = False
-        if INCLUDE_PARENTS and token is not None:
-            lines = [msg]
-            def visit_token(token, depth=0):
-                lines.append('  ' * depth + f'...from: {token.location()}')
-                for parent in token.parents:
-                    visit_token(parent, depth+1)
-            for parent in token.parents:
-                visit_token(parent)
-            msg = '\n'.join(lines)
-
-        Exception.__init__(self, msg)
         self.token = token
+        self.msg = msg
+        self.location = location
+        self.fullmsg = fullmsg
+
+        # When we bubble up, as we pass through code which was processing
+        # various tokens, that code may add those tokens to this list.
+        self.trace: list[tuple[Token, str]] = []
+
+    def __repr__(self) -> str:
+        return self.fullmsg
+
+    def add_trace(self, token: Token, msg: str):
+        self.trace.append((token, msg))
+
+    def pprint(self):
+        for token, msg in reversed(self.trace):
+            print(f"{token.location()}: {msg}")
+        print(f"{self.location}: ERROR: {self.msg}")
 
 
 # NOTE: the order matters, e.g. '++' must come before '+'

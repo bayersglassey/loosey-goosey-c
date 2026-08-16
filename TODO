@@ -304,6 +304,9 @@
         be good to do first...
         => Ok, we've got some better parsing errors now!
 
+        [X] Nicer C stack traces
+            ==> Ok, see ParseError.add_trace
+
         [ ] Add a Token to structs and memory blocks, for debugging purposes.
 
             [X] Also, replace e.g. Struct(x=1, y=2) with Struct({'x': 1, 'y': 2})

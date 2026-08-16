@@ -585,7 +585,7 @@ class Preprocessor:
 
     def warn(self, token: Token, msg: str):
         if not self.quiet:
-            fullmsg = f"{token.location()}: {msg}"
+            fullmsg = f"{token.location()}: WARNING: {msg}"
             if self.warn_stdout:
                 print(fullmsg)
             else:
@@ -728,7 +728,12 @@ class Preprocessor:
             # other things (e.g. the "ifstack")
             lines = tokenize_file(filepath)
             child_pp = self.create_child(local_dir=os.path.dirname(filepath))
-            yield from child_pp.process(lines)
+            try:
+                yield from child_pp.process(lines)
+            except ParseError as ex:
+                filename_msg = f'"{filename}"' if search_local else f'<{filename}>'
+                ex.add_trace(token, f"While including {filename_msg}...")
+                raise
 
     @debug_recursion()
     def _evaluate_conditional_expr(self, tokens: list[Token]) -> bool:

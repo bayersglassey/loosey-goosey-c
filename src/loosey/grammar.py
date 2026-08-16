@@ -1,4 +1,3 @@
-
 import re
 import os
 import sys
@@ -1099,7 +1098,6 @@ class GrammarEvaluator:
 
     def __init__(self):
         self.validate()
-        self._pass_through_exceptions = self.pass_through_exceptions + (ParseError,)
         self.handler_prefix = None
 
     def warn(self, msg: str):
@@ -1226,7 +1224,10 @@ class GrammarEvaluator:
                 return handler(match)
             else:
                 return self.default(match)
-        except self._pass_through_exceptions:
+        except ParseError as ex:
+            ex.add_trace(match.token, f"While handling {match.spec}...")
+            raise
+        except self.pass_through_exceptions:
             raise
         except Exception as ex:
             raise ParseError(match.token, f"Error handling {match.spec}: {ex}")
