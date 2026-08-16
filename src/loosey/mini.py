@@ -208,6 +208,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.type_name_guessing = type_name_guessing
 
         # Define some default macros, which GCC seems to define on my system
+        self.pp.execute('#define __inline')
         self.pp.execute('#define __restrict')
         self.pp.execute('#define __extension__')
         self.pp.execute('#define __attribute__(...)')
@@ -2047,6 +2048,7 @@ def main():
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     parser.add_argument('-p', '--parse-only', default=False, action='store_true')
     parser.add_argument('-s', '--parse-silent', default=False, action='store_true')
+    parser.add_argument('-g', '--type-name-guessing', default=False, action='store_true')
     parser.add_argument('--partial', default=False, action='store_true')
     parser.add_argument('main_args', nargs='*') # NOTE: takes everything after '--'
     args = parser.parse_args()
@@ -2062,7 +2064,10 @@ def main():
         sys_dirs=args.include_sys,
     )
 
-    mini = MiniC(pp_kwargs=pp_kwargs)
+    mini = MiniC(
+        type_name_guessing=args.type_name_guessing,
+        pp_kwargs=pp_kwargs,
+    )
     if args.parse_only or args.parse_silent:
         match = mini.parse_file(
             args.filename,

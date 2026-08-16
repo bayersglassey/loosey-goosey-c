@@ -653,9 +653,9 @@ class Preprocessor:
                 raise ParseError(tokens[1], "Extra tokens after directive arguments")
             match = INCLUDE_REGEX.fullmatch(first_token.value)
             filespec = match.group(1)
-            is_system = filespec[0] == '<'
+            search_local = filespec[0] == '"'
             filename = filespec[1:-1]
-            yield from self.include(filename, is_system, first_token)
+            yield from self.include(filename, search_local, first_token)
         elif first_token.value == '#':
             # Handle preprocessor directives other than #import
             directive = tokens[1].value
@@ -704,24 +704,22 @@ class Preprocessor:
                 return
             yield from self.expand(tokens, finish=False)
 
+    def search_for_include(self, filename: str, search_local: bool = True) -> Optional[str]:
+        if search_local and self.local_dir is not None:
+            filepath = os.path.join(self.local_dir, filename)
+            if os.path.isfile(filepath):
+                return filepath
+        for sys_dir in self.sys_dirs:
+            filepath = os.path.join(sys_dir, filename)
+            if os.path.isfile(filepath):
+                return filepath
+        return None
+
     @debug_recursion()
-    def include(self, filename: str, is_system: bool = False, token: Token = None) -> Iterator[Token]:
-        if is_system:
-            for sys_dir in self.sys_dirs:
-                filepath = os.path.join(sys_dir, filename)
-                if os.path.isfile(filepath):
-                    break
-            else:
-                filepath = None
-        else:
-            if self.local_dir is not None:
-                filepath = os.path.join(self.local_dir, filename)
-                if not os.path.isfile(filepath):
-                    filepath = None
-            else:
-                filepath = None
+    def include(self, filename: str, search_local: bool = True, token: Token = None) -> Iterator[Token]:
+        filepath = self.search_for_include(filename, search_local)
         if filepath is None:
-            local_or_sys = 'system' if is_system else 'local'
+            local_or_sys = 'local' if search_local else 'system'
             self.warn(token, f"File not found for {local_or_sys} include: {filename!r}")
             return
         else:

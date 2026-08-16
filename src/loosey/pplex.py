@@ -190,7 +190,7 @@ class Token(NamedTuple):
 
     def parse_number(self) -> int | float:
         """Produce a Python number from a C number literal"""
-        text = self.value
+        text = self.value.rstrip('L')
         try:
             if '.' in text:
                 return float(text)

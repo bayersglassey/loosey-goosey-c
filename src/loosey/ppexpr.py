@@ -22,7 +22,7 @@ SINGLE_OPS = {
 
 
 def _parse_number(token: Token) -> int:
-    text = token.value
+    text = token.value.rstrip('L')
     if '.' in text:
         raise ParseError(token, f"Floats not allowed in preprocessor expressions: {text!r}")
     try:
