@@ -135,9 +135,7 @@ What it means to "**expand** a token sequence":
             * **Expand** the macro (see below)
             * Restore bound param values
     * Otherwise, do one of the following:
-        * If token is `__FILE__` or `__LINE__`, **yield** a token
-          consisting of the current filename or line number
-        * If token is `#`, do "stringizing":
+        * current If token is `#`, do "stringizing":
             * Get the *next* token
             * If it's the name of a bound macro parameter, join the tokens
               of the corresponding token sequence together (separated by
@@ -159,6 +157,8 @@ What it means to "**expand** a token sequence":
             * **Yield** the two token sequences, with the glued-together
               token in the middle, e.g. `a b c1 2 3`
             * See also: https://gcc.gnu.org/onlinedocs/cpp/Concatenation.html
+        * If token is `__FILE__` or `__LINE__`, **yield** a token
+          consisting of the current filename or line number
         * If token is the name of a bound macro parameter, **expand** the
           corresponding token sequence
         * If token is a macro name, and that macro is not in the

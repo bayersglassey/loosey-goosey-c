@@ -21,6 +21,8 @@ from loosey import get_data_filepath
 from loosey.iter import FancyIterator
 from loosey.pplex import (
     INCLUDE_REGEX,
+    TOKEN_REGEX,
+    TOKEN_PATTERNS,
     ParseError,
     Token,
     Lexer,
@@ -1229,10 +1231,105 @@ class Preprocessor:
             to_string_literal(msg))
 
     @debug_recursion()
+    def _paste_tokens(self, lhs_token: Token, rhs_token: Token) -> list[Token]:
+        """Paste two tokens together, i.e. apply the '##' operation to them
+
+            >>> pp = Preprocessor()
+            >>> pp.execute('#define M2(X, Y) [X ## Y]')
+            >>> pp.execute('#define M3(X, Y, Z) [X ## Y ## Z]')
+
+            >>> for token in pp.process('M2(1, 2)'): token.pprint()
+            <fakefile>:1:1: PUNCTUATION('[')
+            <fakefile>:1:1: NUMBER('12')
+            <fakefile>:1:1: PUNCTUATION(']')
+
+            >>> for token in pp.process('M2(1 2, 3 4)'): token.pprint()
+            <fakefile>:1:1: PUNCTUATION('[')
+            <fakefile>:1:1: NUMBER('1')
+            <fakefile>:1:1: NUMBER('23')
+            <fakefile>:1:1: NUMBER('4')
+            <fakefile>:1:1: PUNCTUATION(']')
+
+            >>> for token in pp.process('M3(1 2, 3 4, 5 6)'): token.pprint()
+            <fakefile>:1:1: PUNCTUATION('[')
+            <fakefile>:1:1: NUMBER('1')
+            <fakefile>:1:1: NUMBER('23')
+            <fakefile>:1:1: NUMBER('45')
+            <fakefile>:1:1: NUMBER('6')
+            <fakefile>:1:1: PUNCTUATION(']')
+
+        """
+
+        # We begin with two tokens, the left-hand one and the right-hand.
+        # First, "expand" the two tokens into lists of tokens.
+        # That is, if either token refers to a bound macro parameter, then
+        # use the list of tokens bound to that parameter; otherwise, use the
+        # token itself (in a single-element list).
+        def _get_tokens(token: Token) -> list[Token]:
+            ident = token.identifier()
+            if ident and ident in self.bound_macro_params:
+                return self.bound_macro_params[ident].copy()
+            else:
+                return [token]
+        lhs_tokens = _get_tokens(lhs_token)
+        rhs_tokens = _get_tokens(rhs_token)
+
+        # Exit early if either list is empty: then there is no pasting to
+        # be done, we just return the other list.
+        if not lhs_tokens:
+            return rhs_tokens
+        elif not rhs_tokens:
+            return lhs_tokens
+        last_lhs_token = lhs_tokens[-1]
+        first_rhs_token = rhs_tokens[0]
+
+        # We now have two lists of tokens.
+        # Next, paste the rightmost token from the left-hand list together
+        # with the leftmost token from the right-hand list, producing a single
+        # "pasted" token.
+        pasted_value = last_lhs_token.value + first_rhs_token.value
+        match = TOKEN_REGEX.fullmatch(pasted_value)
+        if match is None:
+            raise ParseError(lhs_token, f"Invalid pasted token value: {pasted_value!r}")
+        groups = match.groupdict()
+        toktype = next(toktype for toktype in TOKEN_PATTERNS
+            if groups[toktype] is not None)
+        pasted_token = Token.from_parents((last_lhs_token, first_rhs_token),
+            toktype, pasted_value)
+
+        # Now, return the tokens of the two lists, with the pasted one in
+        # the middle.
+        return lhs_tokens[:-1] + [pasted_token] + rhs_tokens[1:]
+
+    @debug_recursion()
     def _expand_token(self, token: Token, tokens: FancyIterator[Token]) -> Iterator[Token]:
         if token.value == '#':
             yield self._stringize(token, tokens)
             return
+        elif token.value == '##':
+            raise ParseError(token, "The '##' operator must have tokens on either side of it")
+
+        next_token = tokens.peek()
+        while next_token and next_token.value == '##':
+            # Handle "token pasting"!..
+            next(tokens) # consume the '##'
+            rhs_token = next(tokens, None) # grab the token on the right of the '##'
+            if rhs_token is None:
+                raise ParseError(token, "The '##' operator must have tokens on either side of it")
+            pasted_tokens = self._paste_tokens(token, rhs_token)
+            if not pasted_tokens:
+                # Both tokens expanded to empty tokenlists!..
+                token = next(tokens, None)
+                if token is None:
+                    return
+                break
+            yield from pasted_tokens[:-1]
+            # Now we go around the while-loop again, with the last of the
+            # pasted tokens ready to potentially be used as the left-hand
+            # side of another '##' operator...
+            token = pasted_tokens[-1]
+            next_token = tokens.peek()
+
         ident = token.identifier()
         if ident == '__LOOSEY_DEFINE_ERRCODES__':
             # Magic token which causes us to define ENOMEM etc...
