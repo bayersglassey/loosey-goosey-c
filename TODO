@@ -76,19 +76,9 @@
     [ ] Keep track of whether tokens had whitespace between them...
         E.g. given `#define M(X) #X`, `M(&x)` should be `"&x"`, not `"& x"`.
 
-    [ ] SUPPORT BACKSLASH-NEWLINE IN THE MIDDLE OF A TOKEN?!?!?!
-        We could probably do it. It's dumb, but then we could maybe use
-        obfuscated C programs as test input, for fun.
-
-        If we end up supporting it, make sure to update docs/preprocessor.md
-
-        UPDATE: awww dang, sqlite requires it to create a multi-line
-        single-line string literal!.. see sqliteInt.h:
-
-            # error "Two or more of the following compile-time configuration options\
-             are defined but at most one is allowed:\
-             SQLITE_SYSTEM_MALLOC, SQLITE_WIN32_MALLOC, SQLITE_MEMDEBUG,\
-             SQLITE_ZERO_MALLOC"
+    [ ] SUPPORT BACKSLASH-NEWLINE IN THE MIDDLE OF A TOKEN.
+        SQLite and CPython both make use of it.
+        Make sure to update docs/preprocessor.md
 
     [ ] Consider looking at the GNGU cpp options & implementing some:
         https://gcc.gnu.org/onlinedocs/cpp/Invocation.html
@@ -281,6 +271,23 @@
             by default, and then deciding if it's partial to raise an
             exception. Easy peasy.
 
+    [X] Support struct initializers, `T t = {1, 2};` etc
+        ...presumably requires parsing of struct declarations!
+        ...and then un-skip minictests/arrays_and_structs.c.SKIP
+
+    [ ] Support variadic functions
+        See: https://en.cppreference.com/c/variadic/va_arg
+
+    [ ] Support C99 initializers
+
+        [ ] `{.x = 1}`, `{[0] = 1}`, etc
+
+        [ ] `(struct { int x, y; })(1, 2)`
+            ...but this may be better done as part of a larger investigation
+            into type casting...
+
+    [ ] Correctly handle static variables within functions!..
+
     [ ] I suspect we should give up on supporting arbitrary Python values,
         unless we always conceptually wrap them in `void*`.
         So for instance, in C the behaviour of `+` and `[...]` is linked,
@@ -301,10 +308,6 @@
 
             [X] Also, replace e.g. Struct(x=1, y=2) with Struct({'x': 1, 'y': 2})
                 ...so we can have Struct({...}, token=...)
-
-    [ ] Implement string.h (especially memset, memcpy, etc)
-        ==> We've started to do this, some parts in Python (CStdlib class)
-        and some in C (data/includes/string.c)
 
     [ ] Rename "index" to "offset" in Pointer and MemoryBlock?..
         Rename MemoryBlock -> AutoGrowMemoryBlock, and
@@ -349,13 +352,16 @@
         But I don't think we want to automatically do file searching.
         Rather, we want to "register" dict[str, Value] things to include
         names.
-        NOTE: we've got the .h files now, in src/loosey/data/include/,
-        but we need a way to also specify whether the function definitions
-        etc should be added to a given MiniC instance...
 
-    [X] Support struct initializers, `T t = {1, 2};` etc
-        ...presumably requires parsing of struct declarations!
-        ...and then un-skip minictests/arrays_and_structs.c.SKIP
+        ==> We've got the .h files now, in src/loosey/data/include/,
+        and the CStdlib class, in src/loosey/stdlib.py.
+        But we need a way to also specify whether the function definitions
+        etc should be added to a given MiniC instance...
+        Or do we? Maybe we don't care, just load 'em all up by default.
+
+        [ ] Implement string.h (especially memset, memcpy, etc)
+            ==> We've started to do this, some parts in Python (CStdlib class)
+            and some in C (data/includes/string.c)
 
     [ ] We proooobably can't get away with using our magic Struct in all
         cases... like if we use it where someone expected a union, and they
@@ -366,19 +372,6 @@
         [X] Struct should probably behave like the number 0 under arithmetic
             operations... so if we allocate some memory with calloc, or
             malloc+memset, we can use it like an array of numbers
-
-    [ ] Support variadic functions
-        See: https://en.cppreference.com/c/variadic/va_arg
-
-    [ ] Support C99 initializers
-
-        [ ] `{.x = 1}`, `{[0] = 1}`, etc
-
-        [ ] `(struct { int x, y; })(1, 2)`
-            ...but this may be better done as part of a larger investigation
-            into type casting...
-
-    [ ] Correctly handle static variables within functions!..
 
 [X] LOOSIER AND GOOSIER PARSING OF TYPE NAMES:
     Currently, we only mark an identifier as being a type name if we encounter
@@ -445,8 +438,9 @@
 [ ] Look at Yacc's implementation (or any papers on it), see what their
     approach is... backtracking?..
 
-[ ] Can g++ be convinced to output C?.. i.e. can we use it in the same
+[X] Can g++ be convinced to output C?.. i.e. can we use it in the same
     way that C++ was originally a fancy C preprocessor?
+    ==> I don't think so.
 
 [X] Try to get to the point where we can run the functions in
     ~/tarballs/sqlite/sqlite-preprocessed-3530400/hash.c
