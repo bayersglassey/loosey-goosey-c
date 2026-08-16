@@ -68,7 +68,7 @@
 
     [X] Handle ## (pasting) operator
 
-    [ ] Handle string literal concatenation
+    [X] Handle string literal concatenation
 
     [ ] Fix our handling of includes!..
         See: notes/includes.txt

@@ -13,10 +13,14 @@
 # ...thanks, Jutta! :)
 # - BAG, 2026
 
+string
+    | STRING
+    ;
+
 primary_expression
     | ident:    NON_TYPE_NAME
     | literal:  CHAR
-    | literal:  STRING
+    | literal:  string ( string )*
     | literal:  NUMBER
     | '(' expression ')'
     ;

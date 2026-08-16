@@ -1708,7 +1708,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         if token.toktype == 'NUMBER':
             return token.parse_number()
         elif token.toktype == 'STRING':
-            return token.parse_string()
+            # Concatenate multiple string literals together
+            return ''.join(child.token.parse_string() for child in match.children)
         elif token.toktype == 'CHAR':
             return value_as_char(token.parse_char())
         else:
