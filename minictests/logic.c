@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-main() {
+int main() {
     printf("Basic true/false:\n");
     if (true) printf("OK\n");
     if (false) printf("BAD\n");
@@ -26,4 +26,5 @@ main() {
     printf("%s\n", true? "OK": "BAD");
     printf("%s\n", false? "BAD": "OK");
 
+    return 0;
 }

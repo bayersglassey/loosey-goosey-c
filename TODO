@@ -380,7 +380,7 @@
 
     [ ] Correctly handle static variables within functions!..
 
-[ ] LOOSIER AND GOOSIER PARSING OF TYPE NAMES:
+[X] LOOSIER AND GOOSIER PARSING OF TYPE NAMES:
     Currently, we only mark an identifier as being a type name if we encounter
     an explicit typedef for it.
     But instead, what if we kept track of which identifiers we've explicitly
@@ -417,6 +417,9 @@
     And boom, all of a sudden maybe we can parse C snippets without
     having to copy-paste them into a little file with a minimal set
     of typedefs!..
+
+    ====> Ok, this is done (see MiniC.type_name_guessing)!..
+    but it's not on by default.
 
 [ ] Add C99 support!.. where can we find a grammar for it?
     Ah ha, updated to C11: https://www.quut.com/c/ANSI-C-grammar-y.html

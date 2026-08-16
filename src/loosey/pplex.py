@@ -286,6 +286,48 @@ PUNCTUATION = (
 )
 
 
+KEYWORDS = frozenset((
+    # Keywords up to and including C99
+    'auto',
+    'break',
+    'case',
+    'char',
+    'const',
+    'continue',
+    'default',
+    'do',
+    'double',
+    'else',
+    'enum',
+    'extern',
+    'float',
+    'for',
+    'goto',
+    'if',
+    'inline',
+    'int',
+    'long',
+    'register',
+    'restrict',
+    'return',
+    'short',
+    'signed',
+    'sizeof',
+    'static',
+    'struct',
+    'switch',
+    'typedef',
+    'union',
+    'unsigned',
+    'void',
+    'volatile',
+    'while',
+    '_Bool',
+    '_Complex',
+    '_Imaginary',
+))
+
+
 # Regex patterns used to parse tokens from a single line of C code.
 # We guarantee that any newlines or backslash+newline pairs have already
 # been stripped from the lines we use these patterns with.

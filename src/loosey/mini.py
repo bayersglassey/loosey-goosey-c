@@ -1,13 +1,14 @@
 import os
 import sys
 import inspect
-from typing import Optional
+from typing import Optional, TypeVar
 from contextlib import contextmanager
+from functools import wraps
 from argparse import ArgumentParser
 
-from loosey import get_data_filepath
+from loosey import get_data_filepath, bool_env_var
 from loosey.grammar import ParseMatch
-from loosey.pplex import Token, ParseError
+from loosey.pplex import Token, ParseError, KEYWORDS
 from loosey.pp import (
     GrammarEvaluatorWithPreprocessor,
     get_local_dir_from_args,
@@ -46,9 +47,7 @@ from loosey.runtime import (
 
 NO_DEFAULT = object()
 
-TYPE_NAME_GUESSING = (
-    os.environ.get('LOOSEY_TYPE_NAME_GUESSING', '0').lower()
-    in ('1', 'true'))
+TYPE_NAME_GUESSING = bool_env_var('LOOSEY_TYPE_NAME_GUESSING')
 
 GRAMMAR_FILENAME = get_data_filepath('ansi-c-grammar.txt')
 
@@ -73,7 +72,7 @@ class _TypeNameGuessScope:
     found_base_type: bool = False
     type_name: Optional[str] = None
 
-DEBUG_TYPE_NAME_GUESSING = False
+DEBUG_TYPE_NAME_GUESSING = bool_env_var('LOOSEY_DEBUG_TYPE_NAME_GUESSING')
 @contextmanager
 def debug_type_name_guessing():
     """Use this when you want to debug type name guessing for a specific
@@ -87,6 +86,23 @@ def debug_type_name_guessing():
         print(ex)
     finally:
         DEBUG_TYPE_NAME_GUESSING = original
+
+
+T = TypeVar('T')
+def _with_parse_cache(cache_attr: str):
+    # NOTE: cache_attr is an attribute of MiniC
+    def decorator(func):
+        @wraps(func)
+        def wrapped_func(self, match: ParseMatch) -> T:
+            cache: dict[str, T] = getattr(self, cache_attr)
+            key = match.unique_id
+            obj: T = cache.get(key)
+            if obj is None:
+                obj = func(self, match)
+                cache[key] = obj
+            return obj
+        return wrapped_func
+    return decorator
 
 
 class MiniC(GrammarEvaluatorWithPreprocessor):
@@ -247,9 +263,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             # Other stuff
             ('declaration', 'decl'):
                 (None, self.exit_declaration),
+            ('function_definition_start', 'start'):
+                (None, self.exit_function_definition_start),
         }
         self.toktype_predicates = {
+            'IDENTIFIER': self.is_identifier_token,
             'TYPE_NAME': self.is_type_name_token,
+            'NON_TYPE_NAME': self.is_non_type_name_token,
         }
 
         # If "type name guessing" is enabled, we register more parser
@@ -280,6 +300,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.parsed_declarators: dict[str, Declarator] = {}
         self.parsed_declarations: dict[str, Declaration] = {}
         self.parsed_structlikes: dict[str, CStructlike] = {}
+        self.parsed_functions: dict[str, Function] = {}
 
         self.validate_pattern_callbacks()
 
@@ -318,6 +339,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         return {name: ptr.contents
             for name, ptr in self.global_scope.items()}
 
+    def _type_name_guess_log(self, msg: str):
+        print('  ' * len(self.type_name_guess_scopes) + msg)
+
     def enter_typedef_block(self, token: Token):
         self.typedef_blocks.append({})
 
@@ -327,17 +351,17 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def enter_type_name_guess_scope(self, token: Token):
         assert self.type_name_guessing
         if DEBUG_TYPE_NAME_GUESSING:
-            print("ENTER GUESS SCOPE")
+            self._type_name_guess_log("ENTER GUESS SCOPE")
         self.type_name_guess_scopes.append(_TypeNameGuessScope())
 
     def exit_type_name_guess_scope(self, token: Token, match: Optional[ParseMatch]):
         assert self.type_name_guessing
         if DEBUG_TYPE_NAME_GUESSING:
-            print("EXIT GUESS SCOPE")
+            self._type_name_guess_log("EXIT GUESS SCOPE")
         type_name_guess_scope = self.type_name_guess_scopes.pop()
         if match and type_name_guess_scope.type_name:
             if DEBUG_TYPE_NAME_GUESSING:
-                print(f"GUESSED: {type_name_guess_scope.type_name}")
+                self._type_name_guess_log(f"GUESSED: {type_name_guess_scope.type_name}")
             self.typedef_blocks[-1][type_name_guess_scope.type_name] = True
 
     def exit_declaration(self, token: Token, match: Optional[ParseMatch]):
@@ -360,20 +384,63 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         for init_declarator in declaration.init_declarators:
             typedef_block[init_declarator.name] = declaration.is_typedef
 
+    def exit_function_definition_start(self, token: Token, match: Optional[ParseMatch]):
+        if match is None:
+            return
+        # We have just parsed a function definition, up to and including
+        # its opening '{', but no further!
+        # Before we proceed into the body, we mark the function's name and
+        # parameters as not being type names.
+        func = self.parse_function(match)
+        typedef_block = self.typedef_blocks[-1]
+        typedef_block[func.name] = False
+        for param in func.params:
+            typedef_block[param] = False
+
     def exit_type_specifier(self, token: Token, match: Optional[ParseMatch]):
         assert self.type_name_guessing
         if match is None:
             return
         if DEBUG_TYPE_NAME_GUESSING:
-            print(f"FOUND BASE TYPE: {token.value}")
+            self._type_name_guess_log(f"FOUND BASE TYPE: {token.value}")
         type_name_guess_scope = self.type_name_guess_scopes[-1]
         type_name_guess_scope.found_base_type = True
+
+    def is_identifier_token(self, token: Token) -> bool:
+        """This method is registered as a callback for the parser, when it
+        needs to determine if the given token is of toktype 'IDENTIFIER'"""
+        return token.toktype == 'IDENTIFIER' and token.value not in KEYWORDS
 
     def is_type_name_token(self, token: Token) -> bool:
         """This method is registered as a callback for the parser, when it
         needs to determine if the given token is of toktype 'TYPE_NAME'.
         There is no such toktype, except for "virtually" based on the output
-        of this method!..
+        of this method!.."""
+        is_type_name = (
+            token.toktype == 'IDENTIFIER' and
+            token.value not in KEYWORDS and
+            self.is_type_name(token.value)
+        )
+        if is_type_name and self.type_name_guess_scopes:
+            type_name_guess_scope = self.type_name_guess_scopes[-1]
+            type_name_guess_scope.found_base_type = True
+            type_name_guess_scope.type_name = token.value
+        return is_type_name
+
+    def is_non_type_name_token(self, token: Token) -> bool:
+        """This method is registered as a callback for the parser, when it
+        needs to determine if the given token is of toktype 'NON_TYPE_NAME'.
+        There is no such toktype, except for "virtually" based on the output
+        of this method!.."""
+        return (
+            token.toktype == 'IDENTIFIER' and
+            token.value not in KEYWORDS and
+            not self.is_type_name(token.value, False)
+        )
+
+    def is_type_name(self, name: str, default: bool = True) -> bool:
+        """Check whether the given identifier is a type name (e.g. because it
+        was declared as such in a typedef).
         See also: https://en.wikipedia.org/wiki/Lexer_hack
 
             >>> mini = MiniC()
@@ -425,35 +492,62 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
              ...
             loosey.pplex.ParseError: <fakefile>:1:10: Multiple base types: int and T
 
-            Unfortunately, the way it's working at the moment, "type name
-            guessing" is pretty much unusable, because it's too eager... for
-            instance, a simple function call is interpreted as a type
-            declaration!..
-            >>> mini.parse('f(x);', 'statement').rule_name
+            This could be a declaration or a multiplication; we assume the
+            former.
+            >>> mini.parse('x * y;', 'statement').rule_name
             'declaration'
+
+            Here's a tricky case we need to make sure we get right:
+            technically, f(x) could be a function call or a type declaration,
+            depending on whether f is a type name or not.
+            And we want to make sure we guess that it's *not* a type name.
+            >>> mini.parse('f(x);', 'statement').rule_name
+            'postfix_expression'
+
+            On the other hand, if there are no parentheses, then we should of
+            course guess that f is a type name, and that this is a declaration:
+            >>> mini.parse('f x;', 'statement').rule_name
+            'declaration'
+
+            Another tricky edge case is cast expressions.
+            Technically, (f)(x) could make sense as a cast of x to type f, or
+            a function call; we assume the latter.
+            >>> mini.parse('(f)(x);', 'statement').rule_name
+            'postfix_expression'
+
+            Since we use magically auto-growing Struct objects as the default
+            value for uninitialized variables, it's often fine if we assume a
+            type name, without actually "knowing" what it represents:
+            >>> mini.eval('SOME_TYPE obj; obj.x = 3; obj')
+            Struct({'x': 3})
+
+            ...however, there are some cases where this doesn't work, like
+            in initializer lists.
+            There's no way around this, since in order to map the list's items
+            onto struct fields, we would need to know the field names!..
+            >>> mini.eval('SOME_TYPE obj = {3, 4};') #doctest: +NORMALIZE_WHITESPACE
+            Traceback (most recent call last):
+             ...
+            loosey.pplex.ParseError: <fakefile>:1:1:
+            Can't use initializer list with non-array/struct/union type
+            ('type_name', 'SOME_TYPE'). List was: [3, 4]
 
         """
 
-        # If the token is '3' or '+' or something, bail out
-        if token.toktype != 'IDENTIFIER':
+        # E.g. 'while' can never be a type name
+        if name in KEYWORDS:
             return False
 
         # Check if we know for sure whether name is or is not a typedef
-        name = token.value
         if DEBUG_TYPE_NAME_GUESSING:
-            print(f"IS TYPE NAME? {name}")
+            self._type_name_guess_log(f"IS TYPE NAME? {name}")
         for block in reversed(self.typedef_blocks):
             if name in block:
                 if DEBUG_TYPE_NAME_GUESSING:
-                    print(f"IT'S OFFICIAL: {block[name]}")
+                    self._type_name_guess_log(f"IT'S OFFICIAL: {block[name]}")
                 is_type_name = block.get(name)
                 if is_type_name is not None:
-                    if is_type_name and self.type_name_guessing:
-                        type_name_guess_scope = self.type_name_guess_scopes[-1]
-                        type_name_guess_scope.found_base_type = True
-                        return True
-                    else:
-                        return is_type_name
+                    return is_type_name
 
         # If we're not doing "type name guessing", return False, since we
         # haven't an explicit declaration that this is a type name.
@@ -473,19 +567,26 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # Nested "guess scopes" are e.g. in `const struct { T t; int x; }`,
         # where the struct definition is inside a "guess scope" but there is
         # also a "guess scope" for each field declaration inside it.
-        type_name_guess_scope = self.type_name_guess_scopes[-1]
-        if type_name_guess_scope.found_base_type:
-            if DEBUG_TYPE_NAME_GUESSING:
-                print("CAN'T BE, WE ALREADY FOUND A BASE TYPE")
-            return False
+        if self.type_name_guess_scopes:
+            type_name_guess_scope = self.type_name_guess_scopes[-1]
+            if type_name_guess_scope.found_base_type:
+                if DEBUG_TYPE_NAME_GUESSING:
+                    self._type_name_guess_log("CAN'T BE, WE ALREADY FOUND A BASE TYPE")
+                return False
 
-        # Let's try saying that this might be a type name, and see what
-        # happens!..
-        if DEBUG_TYPE_NAME_GUESSING:
-            print("SURE!")
-        type_name_guess_scope.found_base_type = True
-        type_name_guess_scope.type_name = name
-        return True
+        if default:
+            # Let's try saying that this might be a type name, and see what
+            # happens!..
+            if DEBUG_TYPE_NAME_GUESSING:
+                self._type_name_guess_log("SURE!")
+            return True
+        else:
+            # We were trying to figure out if this was *not* a type name,
+            # and since we haven't seen evidence to suggest that it is,
+            # let's assume it's not.
+            if DEBUG_TYPE_NAME_GUESSING:
+                self._type_name_guess_log("NAAAH")
+            return False
 
     @contextmanager
     def new_scope(self) -> dict[str, Pointer]:
@@ -570,15 +671,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             raise Exception("{tagged.kind} {tagged.tag!r} has incomplete type")
         return expanded
 
+    @_with_parse_cache('parsed_declarators')
     def parse_declarator(self, match: ParseMatch) -> Declarator:
-        key = match.unique_id
-        declarator = self.parsed_declarators.get(key)
-        if declarator is None:
-            declarator = self._parse_declarator(match)
-            self.parsed_declarators[key] = declarator
-        return declarator
-
-    def _parse_declarator(self, match: ParseMatch) -> Declarator:
         """Parse a "declarator", e.g. in `int x, *y[3]`, the `x` and `*y[3]`
         are declarators.
 
@@ -748,15 +842,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             kinds=kinds,
         )
 
+    @_with_parse_cache('parsed_declarations')
     def parse_declaration(self, match: ParseMatch) -> Declaration:
-        key = match.unique_id
-        declaration = self.parsed_declarations.get(key)
-        if declaration is None:
-            declaration = self._parse_declaration(match)
-            self.parsed_declarations[key] = declaration
-        return declaration
-
-    def _parse_declaration(self, match: ParseMatch) -> Declaration:
         assert match.rule_name in ('declaration', 'field_declaration'), match
 
         # Init declarators, e.g. `x`, `*x[3]`, `x = 2`, etc
@@ -782,6 +869,37 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             init_declarators=init_declarators,
         )
 
+    @_with_parse_cache('parsed_functions')
+    def parse_function(self, match: ParseMatch) -> Function:
+        if match.rule_name == 'function_definition':
+            body = match.children[1:]
+            match = match.children[0]
+        else:
+            # We're just parsing a Function from the *start* of a function
+            # declaration, i.e. everything up to and including the opening
+            # '{' of its body.
+            body = []
+        assert match.rule_name == 'function_definition_start', match
+
+        declarator = self.parse_declarator(match.find('declarator'))
+        if declarator.kind != 'func':
+            raise ParseError(match.token, "Trying to define a function using non-function variable")
+        name = declarator.name
+        params_match = declarator.match.find('params:.')
+        params = [child.token.value for child in
+            # NOTE: might be a parameter_type_list, i.e. (int x, int y), or
+            # might be a list of param_identifier, i.e. just (x, y)
+            params_match.findall('.* declare:.', sorted=True)]
+        variadic = declarator.match.children[1].find('.* ellipsis') is not None
+        return Function(
+            match=match,
+            name=name,
+            params=params,
+            variadic=variadic,
+            body=body,
+            call=self.call_func,
+        )
+
     def runtime_error(self, msg: str):
         # NOTE: this function is available to C code as __loosey_error__
         raise Exception(msg)
@@ -794,28 +912,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     ###########################################################################
     # GRAMMAR HANDLER METHODS
 
-    def on_function_definition(self, match: ParseMatch) -> Value:
-        declarator = self.parse_declarator(match.find('declarator'))
-        if declarator.kind != 'func':
-            raise ParseError(match.token, "Trying to define a function using non-function variable")
-        name = declarator.name
-        params_match = declarator.match.find('params:.')
-        params = [child.token.value for child in
-            # NOTE: might be a parameter_type_list, i.e. (int x, int y), or
-            # might be a list of param_identifier, i.e. just (x, y)
-            params_match.findall('.* declare:.', sorted=True)]
-        body = match.find('block:compound_statement')
-        variadic = declarator.match.children[1].find('.* ellipsis') is not None
-        function = Function(
-            match=match,
-            name=name,
-            params=params,
-            variadic=variadic,
-            body=body,
-            call=self.call_func,
-        )
-        self.declare_var(name, function)
-        return function
+    def on_funcdef__function_definition(self, match: ParseMatch) -> Function:
+        func = self.parse_function(match)
+        self.declare_var(func.name, func)
+        return func
 
     def on_cast__cast_expression(self, match: ParseMatch) -> Value:
         # TODO: handle conversions between char* and other things...
@@ -932,15 +1032,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             self.declare_tagged(structlike)
         return structlike
 
+    @_with_parse_cache('parsed_structlikes')
     def parse_structlike(self, match: ParseMatch) -> CStructlike:
-        key = match.unique_id
-        structlike = self.parsed_structlikes.get(key)
-        if structlike is None:
-            structlike = self._parse_structlike(match)
-            self.parsed_structlikes[key] = structlike
-        return structlike
-
-    def _parse_structlike(self, match: ParseMatch) -> CStructlike:
         """
 
             >>> mini = MiniC()
@@ -971,10 +1064,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
               x, flag(bitfield), y
 
         """
-        if isinstance(match, str):
-            match = self.parse(match, 'struct_or_union_specifier')
-        else:
-            assert match.rule_name == 'struct_or_union_specifier', match
+        assert match.rule_name == 'struct_or_union_specifier', match
 
         kind = match.children[0].token.value # 'struct' or 'union'
 
@@ -1176,6 +1266,16 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             >>> kinds, base_type[0]
             (['pointer'], 'union')
 
+            When "type name guessing" is enabled, we might guess that a given
+            name represents a type, yet be unable to expand it:
+            >>> mini = MiniC(type_name_guessing=True)
+            >>> declaration = mini.parse_declaration(
+            ...     mini.parse('SOME_TYPE *u;', 'declaration'))
+            >>> declarator = declaration.init_declarators[0].declarator
+            >>> base_type, kinds = mini.expand_type(declaration, declarator)
+            >>> kinds, base_type
+            (['pointer'], ('type_name', 'SOME_TYPE'))
+
         """
         kinds = []
         while True:
@@ -1184,7 +1284,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             base_type, typedef_name = declaration.base_type
             if base_type != 'type_name':
                 break
-            typedef = self.get_var(typedef_name)
+            typedef = self.get_var(typedef_name, None)
+            if typedef is None:
+                # We can get here e.g. if "type name guessing" is enabled
+                break
             declaration = typedef.declaration
             declarator = typedef.declarator
         return declaration.base_type, kinds
@@ -1307,11 +1410,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
               0x2:   'age': Struct:
 
             Typedefs combined with structs and arrays:
-            >>> mini.eval(
-            ...     'typedef struct T { int x, xx[2]; } T;'
-            ...     'typedef struct Y { struct T t; T tt[2]; } Y;'
-            ...     'typedef Y YY[];'
-            ... )
+            >>> mini.eval('''
+            ...     typedef struct T { int x, xx[2]; } T;
+            ...     typedef struct Y { struct T t; T tt[2]; } Y;
+            ...     typedef Y YY[];
+            ... ''')
             >>> declaration = mini.parse_declaration(mini.parse(
             ...     # make sure t.xx is initialized as an array
             ...     'T t = {0};'))
@@ -1570,10 +1673,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             for param_name, param_value in zip(func.params, param_values):
                 scope[param_name] = Pointer(param_value)
 
-            body = func.body.children
+            statements = func.body
             while True:
                 try:
-                    for child in body:
+                    for child in statements:
                         self.on(child)
                 except Return as ret:
                     return ret.value
@@ -1587,13 +1690,13 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                         raise ParseError(goto.match.token,
                             f"Top-level label {goto.label_name!r} not found in func: "
                             f"{func} ({labels_msg})")
-                    label_index = func.label_statements.index(label_match)
+                    label_index = func.body.index(label_match)
                     # Go around the loop again, starting from the labeled
                     # child of the function body...
                     # NOTE: we don't support "deep" gotos at the moment, only
                     # gotos whose labels live at the top level of the function
                     # body.
-                    body = func.label_statements[label_index:]
+                    statements = func.body[label_index:]
                 except ControlFlow as ex:
                     raise ParseError(ex.match.token,
                         "Uncaught control flow: {ex.__class__.__name__}")

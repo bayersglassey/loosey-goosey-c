@@ -524,7 +524,7 @@ class Function:
             name: str,
             params: list[str],
             variadic: bool,
-            body: ParseMatch,
+            body: list[ParseMatch],
             call: Callable,
             ):
         self.match = match
@@ -545,21 +545,10 @@ class Function:
         return self.call(self, *args)
 
     @cached_property
-    def label_statements(self) -> list[ParseMatch]:
-        assert self.body.rule_name == 'compound_statement'
-        # NOTE: we don't currently support "deep" labels, only labels at
-        # the top level of the function body.
-        statement_list = self.body.find('statement_list')
-        if statement_list is not None:
-            return statement_list.children
-        else:
-            return self.body.children
-
-    @cached_property
     def labels(self) -> dict[str, ParseMatch]:
         return {
             child.children[0].token.value: child
-            for child in self.label_statements
+            for child in self.body
             if child.rule_name == 'labeled_statement'}
 
 

@@ -14,7 +14,7 @@
 # - BAG, 2026
 
 primary_expression
-    | ident:    IDENTIFIER
+    | ident:    NON_TYPE_NAME
     | literal:  CHAR
     | literal:  STRING
     | literal:  NUMBER
@@ -255,9 +255,12 @@ declarator_array_suffix
 
 declarator_suffix
     | array:   declarator_array_suffix ( declarator_array_suffix )*
-    | params:  '(' ( parameter_type_list )? ')'
-    # Used in K&R function declarations, only for non-abstract declarators:
+    # List of param identifiers is used in K&R function declarations, only
+    # for non-abstract declarators.
+    # We have it before the regular parameter_type_list so that when TYPE_NAME
+    # guessing is enabled, we don't assume that these are type names.
     | params:  '(' param_identifier ( ',' param_identifier )* ')'
+    | params:  '(' ( parameter_type_list )? ')'
     ;
 
 direct_declarator
@@ -314,8 +317,13 @@ statement
     | selection_statement
     | iteration_statement
     | jump_statement
-    # TODO: decide whether it's any better to check for declaration before
-    # expression...
+    # NOTE: we put postfix_expression before declaration, so that when
+    # TYPE_NAME guessing is enabled, we will interpret `f(x)` as a function
+    # call, not a declaration.
+    # However, we put the more general expression_statement after declaration,
+    # so that `T * y` will be interpreted as a declaration, not a
+    # multiplication!..
+    | postfix_expression ';'
     | declaration
     | expression_statement
     ;
@@ -375,23 +383,28 @@ iteration_statement
     | for:    'for' '(' expression_statement expression_statement ( expression )? ')' statement
     ;
 
-label
-    | IDENTIFIER
-    ;
-
 jump_statement
-    | goto:      'goto' label ';'
+    | goto:      'goto' label_name ';'
     | continue:  'continue' ';'
     | break:     'break' ';'
     | return:    'return' ( expression )? ';'
     ;
 
-function_definition
+function_definition_start
+    # The start of a function definition, right before the body's statements.
+    # We have this as a separate rule from function_definition so that as soon
+    # as we know we are about to parse the body of a function definition, we
+    # can mark the function's name and those of its parameters as
+    # non-TYPE_NAME.
     # NOTE: the declaration_list is for K&R C function style, e.g.
     #
     #   int add(x, y) int x; int y; { ... }
     #
-    | ( declaration_specifiers )? declarator ( declaration_list )? compound_statement
+    | start: ( declaration_specifiers )? declarator ( declaration_list )? '{'
+    ;
+
+function_definition
+    | funcdef: function_definition_start ( statement )* '}'
     ;
 
 external_declaration

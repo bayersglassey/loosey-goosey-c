@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-f(x) {
+void f(x) {
     printf("START: %i\n", x);
     switch(x) {
         case 1: printf("ONE\n");
@@ -10,9 +10,10 @@ f(x) {
     }
 }
 
-main() {
+int main() {
     f(1);
     f(2);
     f(3);
     f(4);
+    return 0;
 }

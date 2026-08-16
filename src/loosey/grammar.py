@@ -467,7 +467,7 @@ class ParseMatch(NamedTuple):
     def unique_id(self) -> str:
         # Unique ID for this ParseMatch across all parses in this Python
         # VM, for use e.g. as a cache key
-        return f"{self.token.file.unique_id}:{self.token_i}"
+        return f"{self.token.file.unique_id}:{self.token_i}:{self.n_tokens}"
 
     def prettystring(self):
         if self.children:
@@ -968,6 +968,11 @@ class GrammarParser:
                         token_i += 1
                         if VERBOSITY_STYLE == 2 and self.verbose:
                             print('. ' * self.match_depth + f"TOKEN MATCH: {token.location()}: {token.value!r}")
+                if token_i == original_token_i:
+                    # We currently don't allow empty matches!
+                    if VERBOSITY_STYLE == 1 and self.verbose:
+                        print('. ' * self.match_depth + "NOT MATCH")
+                    return None
                 if VERBOSITY_STYLE == 1 and self.verbose:
                     thing = 'RULE' if subpattern is pattern else 'SUB-PATTERN'
                     print('. ' * self.match_depth + f"{thing} MATCHED!")
