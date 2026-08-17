@@ -20,3 +20,22 @@ strncmp("abcc", "abc", 3) = 0
 strncmp("abcc", "abc", 4) = 1
 strncmp("abc", "abcc", 3) = 0
 strncmp("abc", "abcc", 4) = -1
+=== STRLEN:
+5
+5
+3
+=== STRCPY:
+BBB
+CCB
+=== STRCAT:
+AAABBB
+AAABBBCC
+=== STRDUP:
+hello
+hello
+hel
+=== STR{CHR,STR}:
+llo
+NULL
+llo
+NULL

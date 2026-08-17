@@ -13,6 +13,11 @@ int clamp_cmp(int cmp) {
 #define STRNCMP(X, Y, N) printf("strncmp(%s, %s, %i) = %i\n", #X, #Y, N, clamp_cmp(strncmp(X, Y, N)));
 
 
+const char *string_or_null(const char *s) {
+    return s? s: "NULL";
+}
+
+
 int main() {
 
     printf("=== STRCMP:\n");
@@ -38,6 +43,56 @@ int main() {
     STRNCMP("abcc", "abc", 4)
     STRNCMP("abc", "abcc", 3)
     STRNCMP("abc", "abcc", 4)
+
+    printf("=== STRLEN:\n");
+    {
+        char s[] = "hello\0*******";
+        printf("%i\n", (int)strlen(s));
+        printf("%i\n", (int)strnlen(s, 7));
+        printf("%i\n", (int)strnlen(s, 3));
+    }
+
+    printf("=== STRCPY:\n");
+    {
+        char dst[] = "*********";
+        char src1[] = "BBB";
+        char src2[] = "CCC";
+        strcpy(dst, src1);
+        printf("%s\n", dst);
+        strncpy(dst, src2, 2);
+        printf("%s\n", dst);
+    }
+
+    printf("=== STRCAT:\n");
+    {
+        char dst[] = "AAA\0********";
+        char src1[] = "BBB";
+        char src2[] = "CCC";
+        strcat(dst, src1);
+        printf("%s\n", dst);
+        strncat(dst, src2, 2);
+        printf("%s\n", dst);
+    }
+
+    printf("=== STRDUP:\n");
+    {
+        char s[] = "hello\0****";
+        char *s2 = strdup(s);
+        char *s3 = strndup(s, 7);
+        char *s4 = strndup(s, 3);
+        printf("%s\n", s2);
+        printf("%s\n", s3);
+        printf("%s\n", s4);
+    }
+
+    printf("=== STR{CHR,STR}:\n");
+    {
+        char s[] = "hello";
+        printf("%s\n", string_or_null(strchr(s, 'l')));
+        printf("%s\n", string_or_null(strchr(s, 'x')));
+        printf("%s\n", string_or_null(strstr(s, "ll")));
+        printf("%s\n", string_or_null(strstr(s, "ack")));
+    }
 
     return 0;
 }

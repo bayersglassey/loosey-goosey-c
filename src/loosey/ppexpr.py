@@ -33,7 +33,7 @@ def _parse_number(token: Token) -> int:
         else:
             return int(text)
     except ValueError:
-        raise ParseError(token, f"Couldn't parse as number: {text!r}")
+        raise ParseError(token, f"Couldn't parse as preprocessor number: {text!r}")
 
 
 class ConditionalExpressionEvaluator(GrammarEvaluator):
@@ -172,7 +172,7 @@ class ConditionalExpressionEvaluator(GrammarEvaluator):
         >>> evaluator.eval('1 + 2e6')
         Traceback (most recent call last):
          ...
-        loosey.pplex.ParseError: <fakefile>:1:5: Couldn't parse as number: '2e6'
+        loosey.pplex.ParseError: <fakefile>:1:5: Couldn't parse as preprocessor number: '2e6'
 
         >>> evaluator.eval('* 2')
         Traceback (most recent call last):

@@ -175,7 +175,7 @@ class Token(NamedTuple):
         NOTE: should ideally be the inverse of to_string_literal"""
         # HACK: json.loads is prooooobably good enough
         try:
-            return json.loads(self.value)
+            return json.loads(self.value.replace('\\0', '\0'), strict=False)
         except ValueError:
             raise ParseError(self, f"Couldn't parse as string: {self.value!r}")
 
