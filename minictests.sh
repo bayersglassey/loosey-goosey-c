@@ -133,7 +133,9 @@ for file in $files; do
     echo "=== Input:"
     cat "$file"
 
-    if test -f "$file.out"; then
+    if test -f "$file.sh"; then
+        . "$file.sh"
+    else
         if test "$just_output" = true; then
             echo "=== Output:"
             actual "$file"
@@ -148,9 +150,6 @@ for file in $files; do
         fi
     fi
 
-    if test -f "$file.sh"; then
-        . "$file.sh"
-    fi
 done
 
 echo

@@ -1,0 +1,13 @@
+=== STRTOL
+strtol("12x", 10) -> 12, "x"
+strtol("  12x", 10) -> 12, "x"
+strtol("  +12x", 10) -> 12, "x"
+strtol("  -12x", 10) -> -12, "x"
+strtol("x", 10) -> 0, "x"
+strtol("  x", 10) -> 0, "  x"
+strtol("  +x", 10) -> 0, "  +x"
+strtol("  -x", 10) -> 0, "  -x"
+strtol("  10", 0) -> 10, ""
+strtol("  010", 0) -> 8, ""
+strtol("  0x10", 0) -> 16, ""
+strtol("  ff", 16) -> 255, ""

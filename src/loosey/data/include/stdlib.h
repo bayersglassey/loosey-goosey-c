@@ -82,4 +82,6 @@ int           unsetenv(const char *);
 //size_t        wcstombs(char *restrict, const wchar_t *restrict, size_t);
 //int           wctomb(char *, wchar_t);
 
+#include <stdlib.c> // Just pull the function definitions right in!..
+
 #endif

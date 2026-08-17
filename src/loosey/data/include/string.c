@@ -3,19 +3,19 @@
 // NOTE: some of the string.h functions may be defined in Python, not here!
 // See the CStdlib Python class
 
-size_t strlen(const char* s) {
+static size_t strlen(const char* s) {
     size_t i = 0;
     while (*s++) i++;
     return i;
 }
 
-size_t strnlen(const char* s, size_t n) {
+static size_t strnlen(const char* s, size_t n) {
     size_t i = 0;
     while (n-- && *s++) i++;
     return i;
 }
 
-char* strcpy(char* restrict s1, const char* restrict s2) {
+static char* strcpy(char* restrict s1, const char* restrict s2) {
     char *s0 = s1;
     char c;
     while (c = *s2++) *(s1++) = c;
@@ -23,7 +23,7 @@ char* strcpy(char* restrict s1, const char* restrict s2) {
     return s0;
 }
 
-char* strncpy(char* restrict s1, const char* restrict s2, size_t n) {
+static char* strncpy(char* restrict s1, const char* restrict s2, size_t n) {
     char *s0 = s1;
     char c;
     while (n-- && (c = *s2++)) *(s1++) = c;
@@ -32,7 +32,7 @@ char* strncpy(char* restrict s1, const char* restrict s2, size_t n) {
     return s0;
 }
 
-char* strcat(char* restrict s1, const char* restrict s2) {
+static char* strcat(char* restrict s1, const char* restrict s2) {
     char *s0 = s1;
     char c;
     while (*s1) s1++; // find the end of the string to be appended to
@@ -41,7 +41,7 @@ char* strcat(char* restrict s1, const char* restrict s2) {
     return s0;
 }
 
-char* strncat(char* restrict s1, const char* restrict s2, size_t n) {
+static char* strncat(char* restrict s1, const char* restrict s2, size_t n) {
     char *s0 = s1;
     char c;
     while (*s1) s1++; // find the end of the string to be appended to
@@ -50,14 +50,14 @@ char* strncat(char* restrict s1, const char* restrict s2, size_t n) {
     return s0;
 }
 
-char* strdup(const char* s) {
+static char* strdup(const char* s) {
     size_t len = strlen(s);
     char *new_s = malloc(len + 1);
     if (new_s) strcpy(new_s, s);
     return new_s;
 }
 
-char* strndup(const char* s, size_t n) {
+static char* strndup(const char* s, size_t n) {
     size_t len = strnlen(s, n);
     char *new_s = malloc(len + 1);
     if (new_s) {
@@ -67,7 +67,7 @@ char* strndup(const char* s, size_t n) {
     return new_s;
 }
 
-char* strchr(char* s, int c) {
+static char* strchr(char* s, int c) {
     char c2;
     while (c2 = *s) {
         if (c2 == c) return s;
@@ -76,7 +76,7 @@ char* strchr(char* s, int c) {
     return NULL;
 }
 
-char* strstr(char* s1, const char* s2) {
+static char* strstr(char* s1, const char* s2) {
     // s1 is the haystack, s2 the needle
     size_t n = strlen(s2);
     while (*s1) {
