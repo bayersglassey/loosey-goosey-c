@@ -50,14 +50,14 @@ def pprint_value(value: Value,
           0x1:   'x': 1
           0x2:   'y': 2
 
-        >>> pprint_value(Pointer(MemoryBlock.from_sequence([1, 2, 3])))
+        >>> pprint_value(Pointer.from_sequence([1, 2, 3]))
           0x0: Pointer (offset=0) into memory:
           0x1:   As a C string: b'\x01\x02\x03'
           0x2:   0: 1
           0x3:   1: 2
           0x4:   2: 3
 
-        >>> pprint_value(Pointer(MemoryBlock.from_sequence('abc')))
+        >>> pprint_value(Pointer.from_sequence('abc'))
           0x0: Pointer (offset=0) into memory:
           0x1:   As a C string: b'abc'
           0x2:   0: 97
@@ -300,7 +300,7 @@ def copy_value(value: Value, *, initializer: bool = False) -> Value:
             # If we're an initializer, e.g. `char stuff[] = "Hello"`, then
             # we want to truly copy the data, not use it directly!
             # Because e.g. str is immutable.
-            return Pointer(MemoryBlock.from_sequence(value))
+            return Pointer.from_sequence(value)
         else:
             return Pointer(SequenceBackedMemoryBlock(value))
     else:
@@ -1134,6 +1134,10 @@ class Pointer:
     def __repr__(self) -> str:
         return self.mkrepr()
 
+    @staticmethod
+    def from_sequence(data: Sequence[Value]) -> 'Pointer':
+        return Pointer(MemoryBlock.from_sequence(data))
+
     def as_c_string(self) -> bytes:
         # Particularly useful for doctests!..
         buf = bytearray()
@@ -1150,10 +1154,10 @@ class Pointer:
     def as_list(self) -> list[Value]:
         """
 
-            >>> Pointer(MemoryBlock.from_sequence([1, EMPTY, 3])).as_list()
+            >>> Pointer.from_sequence([1, EMPTY, 3]).as_list()
             [1, EMPTY, 3]
 
-            >>> Pointer(MemoryBlock.from_sequence([EMPTY, 1, 2, EMPTY])).as_list()
+            >>> Pointer.from_sequence([EMPTY, 1, 2, EMPTY]).as_list()
             [1, 2]
 
         """

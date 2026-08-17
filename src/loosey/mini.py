@@ -2102,6 +2102,7 @@ def main():
     parser.add_argument('-p', '--parse-only', default=False, action='store_true')
     parser.add_argument('-s', '--parse-silent', default=False, action='store_true')
     parser.add_argument('-g', '--type-name-guessing', default=False, action='store_true')
+    parser.add_argument('-E', '--full-errors', default=False, action='store_true')
     parser.add_argument('--partial', default=False, action='store_true')
     parser.add_argument('main_args', nargs='*') # NOTE: takes everything after '--'
     args = parser.parse_args()
@@ -2135,6 +2136,8 @@ def main():
         try:
             mini.eval_file(args.filename)
         except ParseError as ex:
+            if args.full_errors:
+                raise
             ex.pprint()
             sys.exit(1)
         main_func = mini.globals().get('main')
@@ -2143,8 +2146,10 @@ def main():
         progname = args.progname or (args.filename if args.filename != '-' else 'main')
         argv = [progname] + args.main_args
         try:
-            retcode = main_func(len(argv), argv)
+            retcode = main_func(len(argv), Pointer.from_sequence(argv))
         except ParseError as ex:
+            if args.full_errors:
+                raise
             ex.pprint()
             sys.exit(1)
         if retcode is None:

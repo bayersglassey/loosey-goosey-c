@@ -293,8 +293,8 @@ class CStdlib:
 
             >>> stdlib = CStdlib()
 
-            >>> dst = Pointer(MemoryBlock.from_sequence(
-            ...     [10, 20, 30, 40, Struct({'x': 1})]))
+            >>> dst = Pointer.from_sequence(
+            ...     [10, 20, 30, 40, Struct({'x': 1})])
             >>> dst.as_list()
             [10, 20, 30, 40, Struct({'x': 1})]
             >>> _ = stdlib.memset(dst + 1, 0, 2) # zero out 2 items
