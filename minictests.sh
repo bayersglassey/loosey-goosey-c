@@ -62,6 +62,18 @@ if test "$mode" = gcc; then
     else
         die "Unrecognized test type: $testtype"
     fi
+elif test "$mode" = tcc; then
+    if test "$testtype" = pp; then
+        prog() ( tcc -E -I pptests "$1" )
+    elif test "$testtype" = cc; then
+        prog() (
+            filename="$1"
+            shift
+            tcc -I minictests "$filename" && ./a.out "$@"
+        )
+    else
+        die "Unrecognized test type: $testtype"
+    fi
 elif test "$mode" = loosey; then
     if test "$testtype" = pp; then
         prog() ( python -m loosey.pp --local-dir pptests -f "$1" )
