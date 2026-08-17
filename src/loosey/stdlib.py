@@ -1,3 +1,4 @@
+import os
 import sys
 import errno as errno_module
 from typing import Any, Optional
@@ -336,3 +337,7 @@ class CStdlib:
     def strlen(self, s) -> int:
         s = value_as_string(s)
         return len(s)
+
+    @_cstdlib_register()
+    def getenv(self, name: str) -> str:
+        return os.environ.get(value_as_string(name), 0)
