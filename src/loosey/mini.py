@@ -8,7 +8,7 @@ from argparse import ArgumentParser
 
 from loosey import get_data_filepath, bool_env_var
 from loosey.grammar import ParseMatch
-from loosey.pplex import Token, ParseError, KEYWORDS
+from loosey.pplex import Lexer, Token, ParseError, KEYWORDS
 from loosey.pp import (
     GrammarEvaluatorWithPreprocessor,
     get_local_dir_from_args,
@@ -2103,6 +2103,7 @@ def main():
     parser.add_argument('-s', '--parse-silent', default=False, action='store_true')
     parser.add_argument('-g', '--type-name-guessing', default=False, action='store_true')
     parser.add_argument('-E', '--full-errors', default=False, action='store_true')
+    parser.add_argument('-D', '--define', default=(), nargs='*')
     parser.add_argument('--partial', default=False, action='store_true')
     parser.add_argument('main_args', nargs='*') # NOTE: takes everything after '--'
     args = parser.parse_args()
@@ -2122,6 +2123,15 @@ def main():
         type_name_guessing=args.type_name_guessing,
         pp_kwargs=pp_kwargs,
     )
+
+    for definition in args.define:
+        if '=' in definition:
+            name, value = definition.split('=', 1)
+        else:
+            name = definition
+            value = ''
+        mini.eval(f"#define {name} {value}")
+
     if args.parse_only or args.parse_silent:
         match = mini.parse_file(
             args.filename,
