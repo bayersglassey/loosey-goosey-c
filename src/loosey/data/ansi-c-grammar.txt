@@ -160,10 +160,15 @@ type_qualifier
     | [ 'const' 'volatile' 'restrict' ]
     ;
 
+function_specifier
+    | [ 'inline' ]
+    ;
+
 declaration_specifier
     | storage_class_specifier
     | type_qualifier
     | type_specifier
+    | function_specifier
     ;
 
 declaration_specifiers
