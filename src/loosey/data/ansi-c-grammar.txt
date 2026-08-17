@@ -171,9 +171,22 @@ declaration_specifiers
     | declspec: declaration_specifier ( declaration_specifier )*
     ;
 
+designator
+    | index: '[' constant_expression ']'
+    | dot:   '.' field_name
+    ;
+
+designation
+    | parts: designator ( designator )* '='
+    ;
+
+initializer_list_elem
+    | ( designation )? initializer
+    ;
+
 initializer
     | assignment_expression
-    | initializer_list: '{' initializer ( ',' initializer )* ( ',' )? '}'
+    | initializer_list: '{' initializer_list_elem ( ',' initializer_list_elem )* ( ',' )? '}'
     ;
 
 init_declarator

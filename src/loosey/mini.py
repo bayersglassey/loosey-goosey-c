@@ -35,6 +35,9 @@ from loosey.runtime import (
     Break,
     Goto,
     Exit,
+    InitializerList,
+    Initializer,
+    base_type_repr,
     pprint_value,
     value_as_bool,
     value_as_char,
@@ -50,9 +53,6 @@ NO_DEFAULT = object()
 TYPE_NAME_GUESSING = bool_env_var('LOOSEY_TYPE_NAME_GUESSING')
 
 GRAMMAR_FILENAME = get_data_filepath('ansi-c-grammar.txt')
-
-Initializer = Value | list['Initializer']
-
 
 # Maps rule names to operators
 # NOTE: only lists rules which correspond to a single operator.
@@ -531,7 +531,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
              ...
             loosey.pplex.ParseError: <fakefile>:1:1:
             Can't use initializer list with non-array/struct/union type
-            ('type_name', 'SOME_TYPE'). List was: [3, 4]
+            type_name SOME_TYPE. List was: {3, 4}
 
         """
 
@@ -1170,10 +1170,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     if is_initializer_list:
                         # E.g. `= {0}`, `= {1, 2}`, `= {{1, 2}, {3, 4}}`, etc
                         value = self.convert_initializer(
+                            initializer.token,
                             declaration,
                             init_declarator.declarator,
                             self.on(initializer),
-                            initializer.token,
                         )
                     else:
                         # E.g. `= 3`, `= "hello"`, etc
@@ -1293,19 +1293,54 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             declarator = typedef.declarator
         return declaration.base_type, kinds
 
-    def on_initializer_list__initializer(self, match: ParseMatch) -> list[Initializer]:
-        return [self.on(child) for child in match.children]
+    def on_initializer_list__initializer(self, match: ParseMatch) -> InitializerList:
+        """Parse an initializer list
+
+            >>> mini = MiniC()
+            >>> ii = mini.eval('''{
+            ...     0,
+            ...     {
+            ...         .x = 1,
+            ...         [1] = 2,
+            ...         3
+            ...     },
+            ...     .x.y[0][1] = {0},
+            ... }''', 'initializer')
+            >>> ii
+            {0, {.x = 1, [1] = 2, 3}, .x.y[0][1] = {0}}
+            >>> ii.pprint()
+            next = 0
+            next =
+              .x = 1
+              [1] = 2
+              next = 3
+            .x.y[0][1] =
+              next = 0
+
+        """
+        elems = []
+        for child in match.children:
+            if child.rule_name == 'initializer_list_elem':
+                keys = [
+                    part_child.children[0].token.value
+                    if part_child.pattern_name == 'dot' else
+                    self.on(part_child.children[0])
+                for part_child in child.children[0].children]
+                value = self.on(child.children[1])
+                elems.append((keys, value))
+            else:
+                value = self.on(child)
+                elems.append((None, value))
+        return InitializerList(match.token, elems)
 
     def convert_initializer(
             self,
+            token: Token,
             declaration: Declaration,
             declarator: Declarator,
             initializer: Initializer,
-            initializer_token: Optional[Token] = None,
             ) -> Value:
         r"""Figures out what the value of an initializer is.
-        That wouldn't be a hard problem... except when we need to match
-        initializer list elements onto struct fields!..
 
             >>> mini = MiniC()
 
@@ -1318,8 +1353,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             ...     declarator, initializer_match = declaration.init_declarators[i]
             ...     initializer = mini.on(initializer_match)
             ...     value = mini.convert_initializer(
-            ...         declaration, declarator, initializer,
-            ...         initializer_match.token)
+            ...         initializer_match.token,
+            ...         declaration,
+            ...         declarator,
+            ...         initializer,
+            ...     )
             ...     print(f"=== {declarator.name}:")
             ...     pprint_value(value)
 
@@ -1460,12 +1498,11 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         """
 
         base_type, kinds = self.expand_type(declaration, declarator)
-        base_type, base_type_arg = base_type
 
         def visit(initializer: Initializer, kind_i: int = 0) -> Value:
             kind = None if kind_i >= len(kinds) else kinds[kind_i]
 
-            if not isinstance(initializer, list):
+            if not isinstance(initializer, InitializerList):
                 if initializer == 0 and not isinstance(initializer, Struct):
                     # As a special case, initializing stuff to 0 always
                     # produces an "uninitialized" value, e.g. a magic
@@ -1481,61 +1518,74 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     # memory "zeroed out", which for us means it should
                     # be an initialized value, i.e. a fresh Struct.
                     return self._create_uninitialized_value(
-                        initializer_token, declarator.name, kind)
+                        token, declarator.name, kind)
                 # Initializer is already a value, just use it as-is!
                 # ...except, take a copy of it first, which also converts from
                 # e.g. Python str to Pointer
                 return copy_value(initializer, initializer=True)
 
+            # Convert our new InitializerList class to a plain old list,
+            # like we used to use.
+            # This is a temporary backwards-compat thing while we convert this
+            # code to use InitializerList directly, which will be needed in
+            # order to support "designators", i.e. `.x = ...` and `[0] = ...`.
+            elems = []
+            for key_parts, elem in initializer.elems:
+                if key_parts is not None:
+                    raise ParseError(initializer.token,
+                        f"Initializer element with non-null key parts: {key_parts!r}")
+                elems.append(elem)
+
             if kind is None:
-                if base_type not in ('struct', 'union'):
+                if base_type[0] not in ('struct', 'union'):
                     raise ParseError(declaration.match.token,
-                        f"Can't use initializer list with non-array/struct/union type {base_type, base_type_arg}. "
+                        f"Can't use initializer list with non-array/struct/union type {base_type_repr(base_type)}. "
                         f"List was: {initializer!r}")
-                structlike = self.parse_structlike(base_type_arg)
+                structlike = self.parse_structlike(base_type[1])
                 structlike = self.complete_tagged(structlike)
-                if base_type == 'union':
+                if base_type[0] == 'union':
                     # Union initializer
                     # NOTE: unions can only be initialized to their first member
-                    if len(initializer) != 1:
-                        raise ParseError(initializer_token,
+                    if len(elems) != 1:
+                        raise ParseError(initializer.token,
                             f"Expected 1 initializer element for union defined at {structlike.token.location()}, "
                             f"got: {initializer!r}")
                     field_name, (field_declaration, field_declarator) = next(
                         iter(structlike.fields.items()))
                     field_value = self.convert_initializer(
+                        initializer.token,
                         field_declaration,
                         field_declarator,
-                        initializer[0],
-                        initializer_token,
+                        elems[0],
                     )
                     return Struct({field_name: field_value})
                 else:
                     # Struct initializer
-                    if len(initializer) < len(structlike.fields):
+                    if len(elems) < len(structlike.fields):
                         # Pad the initializer out with zeros if need be.
                         # This ensures that all fields are initialized with
                         # the proper "kind" -- in particular, array fields
                         # should be initialized to Pointer, not Struct
-                        initializer += [0] * (len(structlike.fields) - len(initializer))
+                        elems += [0] * (len(structlike.fields) - len(elems))
                     field_values = {
                         field_name: self.convert_initializer(
+                            initializer.token,
                             field_declaration,
                             field_declarator,
                             child_initializer,
-                            initializer_token,
                         )
                         for child_initializer, (field_name,
                             (field_declaration, field_declarator))
-                        in zip(initializer, structlike.fields.items())}
+                        in zip(elems, structlike.fields.items())}
                     return Struct(field_values)
             elif kind == 'array':
                 # Array initializer
                 # Convert initializer list into an array value, i.e. a pointer
                 # to an initialized block of memory
                 mem = MemoryBlock()
-                mem.update(enumerate(visit(child_initializer, kind_i + 1)
-                    for child_initializer in initializer))
+                mem.update(enumerate(
+                    visit(child_initializer, kind_i + 1)
+                    for child_initializer in elems))
                 return Pointer(mem)
             else:
                 # E.g. if kind in ('pointer', 'func')

@@ -11,6 +11,7 @@ from typing import (
 )
 from functools import cached_property
 
+from loosey.pplex import Token
 from loosey.grammar import ParseMatch, ParseError
 
 
@@ -1216,3 +1217,53 @@ class Pointer:
 
     def free(self):
         self.mem.free()
+
+
+# Key parts: None, or a list of e.g. 'x' for `.x` or 3 for `[3]`.
+# So for instance, the key parts of `.x.y[1] = 3` are ['x', 'y', 1].
+# In the initializer list `{.x = 1, 2, 3}, `.x = 1` has key parts ['x'],
+# and `2`, `3` have key parts None.
+InitializerListElemKeyParts = Optional[list[str | int]]
+
+# Element of an initializer list, e.g. `.x.y[1] = 3` or `.x = {...etc...}`
+InitializerListElem = tuple[InitializerListElemKeyParts, 'Initializer']
+
+class InitializerList:
+
+    def __init__(self, token: Token, elems: list[InitializerListElem]):
+        self.token = token
+        self.elems = elems
+
+    def __repr__(self) -> str:
+        return self.prettystring()
+
+    def prettystring(self) -> str:
+        msg_parts = []
+        for key_parts, child in self.elems:
+            if isinstance(child, InitializerList):
+                msg = child.prettystring()
+            else:
+                msg = repr(child)
+            if key_parts is not None:
+                key_msg = ''.join(f'.{k}' if isinstance(k, str) else f'[{k}]'
+                    for k in key_parts)
+                msg = f'{key_msg} = {msg}'
+            msg_parts.append(msg)
+        return '{' + ', '.join(msg_parts) + '}'
+
+    def pprint(self, depth=0):
+        indent = '  ' * depth
+        for key_parts, child in self.elems:
+            if key_parts is None:
+                key_msg = 'next'
+            else:
+                key_msg = ''.join(f'.{k}' if isinstance(k, str) else f'[{k}]'
+                    for k in key_parts)
+            if isinstance(child, InitializerList):
+                print(f"{indent}{key_msg} =")
+                child.pprint(depth + 1)
+            else:
+                print(f"{indent}{key_msg} = {child!r}")
+
+
+Initializer = Value | InitializerList

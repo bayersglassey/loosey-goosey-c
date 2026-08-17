@@ -275,16 +275,20 @@
         ...presumably requires parsing of struct declarations!
         ...and then un-skip minictests/arrays_and_structs.c.SKIP
 
-    [ ] Support variadic functions
-        See: https://en.cppreference.com/c/variadic/va_arg
-
     [ ] Support C99 initializers
+        See:
+        * https://www.quut.com/c/ANSI-C-grammar-y.html
+        * https://en.cppreference.com/c/language/array_initialization
+        * https://en.cppreference.com/c/language/struct_initialization
 
         [ ] `{.x = 1}`, `{[0] = 1}`, etc
 
         [ ] `(struct { int x, y; })(1, 2)`
             ...but this may be better done as part of a larger investigation
             into type casting...
+
+    [ ] Support variadic functions
+        See: https://en.cppreference.com/c/variadic/va_arg
 
     [ ] Correctly handle static variables within functions!..
 
@@ -338,6 +342,7 @@
         Are we ok to use int, or should we implement a Char which is like an
         int, but with wrapping?.. probably...
         => Ok, now we have src/loosey/intwrap.py, shall we use it?..
+        => See also: https://en.cppreference.com/c/language/conversion
 
         See also: notes/strings_and_bytes.txt
 
