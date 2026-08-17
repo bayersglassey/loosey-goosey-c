@@ -1096,9 +1096,10 @@ class GrammarEvaluator:
     pass_through_exceptions: tuple[Type[Exception], ...] = ()
     handler_prefixes: tuple[str, ...] = ()
 
-    def __init__(self):
+    def __init__(self, *, handle_errors: bool = False):
         self.validate()
         self.handler_prefix = None
+        self.handle_errors = handle_errors
 
     def warn(self, msg: str):
         print(f"=== WARNING: {msg}")
@@ -1199,8 +1200,15 @@ class GrammarEvaluator:
     def eval(self, tokens: list[Token] | str, rule_name: Optional[str] = None):
         tokens = self.coerce_tokens(tokens)
         rule_name = rule_name or self.main_rule_name
-        match = self.parse(tokens, rule_name, empty_ok=self.eval_empty_ok)
-        return None if match is None else self.on(match)
+        try:
+            match = self.parse(tokens, rule_name, empty_ok=self.eval_empty_ok)
+            return None if match is None else self.on(match)
+        except ParseError as ex:
+            if self.handle_errors:
+                ex.pprint()
+                return None
+            else:
+                raise
 
     def default(self, match: ParseMatch):
         # NOTE: subclasses may want to override this method
