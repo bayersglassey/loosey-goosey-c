@@ -264,7 +264,7 @@ def value_as_string(value: Value) -> str:
         value = value.as_c_string()
         return value.decode() # I sure hope this is valid UTF-8!..
     else:
-        return Exception(f"Expected string, got: {value!r}")
+        raise Exception(f"Expected string, got: {value!r}")
 
 
 def value_as_pointer(value: Value) -> 'Pointer':
