@@ -1,1 +1,1 @@
-include src/loosey/data/*
+graft src/loosey/data/
