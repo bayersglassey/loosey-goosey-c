@@ -234,25 +234,24 @@ class ParseError(Exception):
     def add_trace(self, token: Token, msg: str):
         self.trace.append((token, msg))
 
-    @property
-    def root_ex(self) -> Exception:
-        """Find the first non-ParseError in self's chain, if any.
-        If it's ParseError all the way down, return the first one in the
-        chain."""
+    def get_root(self) -> Optional[Exception]:
+        """Find the first non-ParseError in self's chain, if any"""
         ex = self
         while True:
             if not isinstance(ex, ParseError):
-                break
+                return ex
             elif ex.__cause__ is not None:
                 ex = ex.__cause__
             elif ex.__context__ is not None:
                 ex = ex.__context__
             else:
-                break
-        return ex
+                # It was ParseError all the way down!..
+                return None
 
     def pprint(self, *, file=None):
-        print_exception(self.root_ex, file=sys.stdout if file is None else file)
+        root_ex = self.get_root()
+        if root_ex is not None:
+            print_exception(root_ex, file=sys.stdout if file is None else file)
         for token, msg in reversed(self.trace):
             print(f"{token.location()}: {msg}", file=file)
         print(f"{self.location}: ERROR: {self.msg}", file=file)

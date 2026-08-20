@@ -315,20 +315,39 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         # Debugging stuff
         self.func_calls = []
         self.debug_func_calls = debug_func_calls
+        self.debug_func_filters = []
 
-    def watch_var(self, name: str):
+    def watch_var(self, name: str, *, watch_current_value: bool = True):
         # NOTE: we declare the var with a value of None, i.e. void, so that
         # C initializers know it's fine to populate it with a value
-        ptr = self.declare_var(name, None)
+        ptr = self.declare_var(name, None, overwrite=False)
         def handler(index: int, value: Value):
-            indent = '  ' * len(self.func_calls)
-            print(indent + f"Watched {name}[{index}] change to:")
-            pprint_value(value, base_indent=indent)
+            if self.debug_func_calls:
+                indent = '  ' * len(self.func_calls)
+            else:
+                indent = ''
+            name_msg = name
+            if index != 0:
+                # Somebody's doing something fancy O_o
+                name_msg = f'(&{name})[{index}]'
+            print(indent + f"Watched {name_msg} change to: {value!r}")
         ptr.add_change_handler(handler)
+        if watch_current_value and isinstance(ptr.contents, Pointer):
+            def current_value_handler(index: int, value: Value):
+                if self.debug_func_calls:
+                    indent = '  ' * len(self.func_calls)
+                else:
+                    indent = ''
+                name_msg = f'{name}[{index}]'
+                print(indent + f"Watched {name_msg} change to: {value!r}")
+            ptr.contents.add_change_handler(current_value_handler)
 
-    def watch_vars(self, *names):
+    def watch_vars(self, *names, **kwargs):
         for name in names:
-            self.watch_var(name)
+            self.watch_var(name, **kwargs)
+
+    def add_debug_func_filter(self, filter):
+        self.debug_func_filters.append(filter)
 
     def validate_pattern_callbacks(self):
         for rule_name, pattern_name in self.pattern_callbacks:
@@ -666,13 +685,14 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             ptr.contents = value
 
-    def declare_var(self, name: str, value: Value) -> Pointer:
+    def declare_var(self, name: str, value: Value, *, overwrite: bool = True) -> Pointer:
         """Sets the value of the indicated variable (including functions,
         typedefs, etc) within the current scope, creating it if necessary."""
         scope = self.scopes[-1]
         if name in scope:
             ptr = scope[name]
-            ptr.contents = value
+            if overwrite:
+                ptr.contents = value
             return ptr
         else:
             ptr = Pointer(value)
@@ -1744,14 +1764,23 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             # ...and extract a reference from it!
             return self._postfix_reference_operator(value, match.children[-1])
 
+    def _should_debug_func_call(self, func: Function) -> bool:
+        if not self.debug_func_calls:
+            return False
+        for filter in self.debug_func_filters:
+            if not filter(func):
+                return False
+        return True
+
     def call_func(self, func: Function, *param_values) -> Value:
-        if self.debug_func_calls:
+        should_debug = self._should_debug_func_call(func)
+        if should_debug:
             indent = '  ' * len(self.func_calls)
             print(indent + f'Calling: {func.name}')
             if self.debug_func_calls >= 2:
                 for i, param_value in enumerate(param_values):
                     print(indent + f'Param {i}: {param_value!r}')
-        self.func_calls.append((func, param_values))
+            self.func_calls.append((func, param_values))
         retval = NO_DEFAULT
         ex = NO_DEFAULT
         try:
@@ -1761,8 +1790,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             ex = _ex
             raise ex
         finally:
-            self.func_calls.pop()
-            if self.debug_func_calls:
+            if should_debug:
+                self.func_calls.pop()
                 print(indent + f'Returning from: {func.name}')
                 if self.debug_func_calls >= 2:
                     if retval is not NO_DEFAULT:
