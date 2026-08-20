@@ -27,6 +27,7 @@
 import re
 import sys
 import json
+from traceback import print_exception
 from uuid import uuid4
 from ast import literal_eval
 from typing import NamedTuple, Iterable, Iterator, Optional
@@ -233,10 +234,28 @@ class ParseError(Exception):
     def add_trace(self, token: Token, msg: str):
         self.trace.append((token, msg))
 
-    def pprint(self):
+    @property
+    def root_ex(self) -> Exception:
+        """Find the first non-ParseError in self's chain, if any.
+        If it's ParseError all the way down, return the first one in the
+        chain."""
+        ex = self
+        while True:
+            if not isinstance(ex, ParseError):
+                break
+            elif ex.__cause__ is not None:
+                ex = ex.__cause__
+            elif ex.__context__ is not None:
+                ex = ex.__context__
+            else:
+                break
+        return ex
+
+    def pprint(self, *, file=None):
+        print_exception(self.root_ex, file=sys.stdout if file is None else file)
         for token, msg in reversed(self.trace):
-            print(f"{token.location()}: {msg}")
-        print(f"{self.location}: ERROR: {self.msg}")
+            print(f"{token.location()}: {msg}", file=file)
+        print(f"{self.location}: ERROR: {self.msg}", file=file)
 
 
 # NOTE: the order matters, e.g. '++' must come before '+'
