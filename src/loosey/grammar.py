@@ -1101,6 +1101,9 @@ class GrammarEvaluator:
         self.handler_prefix = None
         self.handle_errors = handle_errors
 
+        # Stack of matches currently being handled, pushed/popped by self.on()
+        self.handling_stack: list[ParseMatch] = []
+
     def warn(self, msg: str):
         print(f"=== WARNING: {msg}")
 
@@ -1227,6 +1230,7 @@ class GrammarEvaluator:
                 if pattern_name else self.handler_prefix)
         handler_name = self.get_handler_name(match)
         handler = getattr(self, handler_name, None)
+        self.handling_stack.append(match)
         try:
             if handler is not None:
                 return handler(match)
@@ -1239,6 +1243,8 @@ class GrammarEvaluator:
             raise
         except Exception as ex:
             raise ParseError(match.token, f"Error handling {match.spec}: {ex}")
+        finally:
+            assert self.handling_stack.pop() is match
 
 
 def get_grammar_filenames():

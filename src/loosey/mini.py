@@ -320,34 +320,44 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def pprint(self, value: Value, **kwargs):
         return pprint_value(value, **kwargs)
 
-    def watch_var(self, name: str, *, watch_current_value: bool = True):
+    def watch_var(self, name: str, *, watch_current_value: bool = True, with_locations: bool = False):
         # NOTE: we declare the var with a value of None, i.e. void, so that
         # C initializers know it's fine to populate it with a value
         ptr = self.declare_var(name, None, overwrite=False)
-        def handler(index: int, value: Value):
+        def print_msg(msg):
+            prefix = ''
             if self.debug_func_calls:
-                indent = '  ' * len(self.func_calls)
-            else:
-                indent = ''
+                prefix += '  ' * len(self.func_calls)
+            if with_locations:
+                match = self.handling_stack[-1]
+                prefix += f"At {match.token.location()}: "
+            print(f"{prefix}{msg}")
+        def handler(index: int, value: Value):
             name_msg = name
             if index != 0:
                 # Somebody's doing something fancy O_o
                 name_msg = f'(&{name})[{index}]'
-            print(indent + f"Watched {name_msg} change to: {value!r}")
+            print_msg(f"Watched {name_msg} change to: {value!r}")
         ptr.add_change_handler(handler)
         if watch_current_value and isinstance(ptr.contents, Pointer):
             def current_value_handler(index: int, value: Value):
-                if self.debug_func_calls:
-                    indent = '  ' * len(self.func_calls)
-                else:
-                    indent = ''
                 name_msg = f'{name}[{index}]'
-                print(indent + f"Watched {name_msg} change to: {value!r}")
+                print_msg(f"Watched {name_msg} change to: {value!r}")
             ptr.contents.add_change_handler(current_value_handler)
+
+    def unwatch_var(self, name: str, *, unwatch_current_value: bool = True):
+        ptr = self.get_var_ref(name)
+        ptr.clear_change_handlers()
+        if unwatch_current_value and isinstance(ptr.contents, Pointer):
+            ptr.contents.clear_change_handlers()
 
     def watch_vars(self, *names, **kwargs):
         for name in names:
             self.watch_var(name, **kwargs)
+
+    def unwatch_vars(self, *names, **kwargs):
+        for name in names:
+            self.unwatch_var(name, **kwargs)
 
     def add_debug_func_filter(self, filter):
         self.debug_func_filters.append(filter)
@@ -1519,7 +1529,8 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
               0x0: Struct:
               0x1:   'x': Struct:
               0x2:   'xx': Pointer (offset=0) into memory:
-              0x3:     0: Struct:
+              0x3:     As a C string: b''
+              0x4:     0: Struct:
             >>> declaration = mini.parse_declaration(mini.parse('''
             ...     // array of array of Y
             ...     YY yy[] = {{{

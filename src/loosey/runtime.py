@@ -166,7 +166,7 @@ def pprint_value(value: Value,
                 print_line(f"Pointer (offset={value.index}) into memory:")
                 all_int = all(
                     isinstance(mem_value, int) or
-                    mem_value == 0 # e.g. empty Struct
+                    (isinstance(mem_value, Struct) and mem_value.empty) # empty Struct
                     for mem_index, mem_value in value.mem.items())
                 if all_int:
                     print_line(f"As a C string: {value.as_c_string()}", depth + 1, key=None)
@@ -644,6 +644,10 @@ class Struct:
     def __iter__(self):
         return iter(self.fields)
 
+    @property
+    def empty(self) -> bool:
+        return len(self.fields) == 0
+
     def pprint(self, **kwargs):
         pprint_value(self, **kwargs)
 
@@ -1103,6 +1107,9 @@ class Pointer:
 
     def add_change_handler(self, handler):
         self.change_handlers.append(handler)
+
+    def clear_change_handlers(self):
+        self.change_handlers.clear()
 
     def pprint(self, **kwargs):
         pprint_value(self, **kwargs)
