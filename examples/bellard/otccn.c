@@ -284,7 +284,51 @@
 
     ...so it looks like information about the various operators is encoded
     in the magic string, somehow...
-    TODO: investigate that!
+    Now, looking at where magic() is called, the following things happen
+    immediately beforehand:
+
+        tokl = 0;
+        tok = ch;
+        inp();
+
+    So, `tok` contains one character from the input stream, and inp() causes
+    `ch` to contain the next character.
+    So for instance, when we use magic() to parse the "<=" operator, `tok` is
+    '<' and `ch` is `=`.
+
+    Let's set up a version of magic(), called magic2(), which is more easy to
+    call, using parameters and printf instead of global variables:
+    >>> mini = new_mini(b'input not used')
+    >>> magic2 = mini.eval(r"""magic2(tok, ch) {
+    ...     int t = MAGIC_TOKEN_STRING, l, a;
+    ...     while (l = *(char *)t++) {
+    ...         a = *(char *)t++;
+    ...         tokc = 0;
+    ...         while ((tokl = *(char *)t++ - 'b') < 0)
+    ...             tokc = tokc * 64 + tokl + 64;
+    ...         if (l == tok & (a == ch | a == '@')) {
+    ...             printf("%i %i\n", tokl, tokc);
+    ...             break;
+    ...         }
+    ...     }
+    ... }""")
+    >>> magic2(ord('<'), ord('='))
+    4 14
+    >>> magic2(ord('<'), ord(' '))
+    4 12
+    >>> magic2(ord('<'), ord('2'))
+    4 12
+    >>> magic2(ord('<'), ord('<'))
+    3 14734225
+    >>> magic2(ord('-'), ord('x'))
+    2 3640117289
+    >>> magic2(ord('~'), ord('x'))
+    2 53495
+
+    ...hmmm, and this makes me realize, I believe this code is relying on
+    32-bit integers with proper wraparound behaviour!
+    We have the Python classes for that kind of integer, but they're not
+    integrated into MiniC yet. I guess I should have a look at that. :)
 
 */
 #ifndef TINY
