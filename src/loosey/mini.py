@@ -48,7 +48,11 @@ from loosey.runtime import (
 )
 
 
-NO_DEFAULT = object()
+class NoDefault:
+    """Singleton for telling when Python function parameters weren't
+    explicitly passed a value"""
+    def __repr__(self): return 'NO_DEFAULT'
+NO_DEFAULT = NoDefault()
 
 TYPE_NAME_GUESSING = bool_env_var('LOOSEY_TYPE_NAME_GUESSING')
 
@@ -202,6 +206,7 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
     def __init__(self,
             *,
             type_name_guessing: bool = TYPE_NAME_GUESSING,
+            debug_func_calls: int = 0,
             **kwargs):
         super().__init__(**kwargs)
 
@@ -298,12 +303,32 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     (None, self.exit_type_specifier),
             })
 
+        # Caches for use with _with_parse_cache
         self.parsed_declarators: dict[str, Declarator] = {}
         self.parsed_declarations: dict[str, Declaration] = {}
         self.parsed_structlikes: dict[str, CStructlike] = {}
         self.parsed_functions: dict[str, Function] = {}
 
+        # Validation
         self.validate_pattern_callbacks()
+
+        # Debugging stuff
+        self.func_calls = []
+        self.debug_func_calls = debug_func_calls
+
+    def watch_var(self, name: str):
+        # NOTE: we declare the var with a value of None, i.e. void, so that
+        # C initializers know it's fine to populate it with a value
+        ptr = self.declare_var(name, None)
+        def handler(index: int, value: Value):
+            indent = '  ' * len(self.func_calls)
+            print(indent + f"Watched {name}[{index}] change to:")
+            pprint_value(value, base_indent=indent)
+        ptr.add_change_handler(handler)
+
+    def watch_vars(self, *names):
+        for name in names:
+            self.watch_var(name)
 
     def validate_pattern_callbacks(self):
         for rule_name, pattern_name in self.pattern_callbacks:
@@ -641,14 +666,18 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         else:
             ptr.contents = value
 
-    def declare_var(self, name: str, value: Value):
+    def declare_var(self, name: str, value: Value) -> Pointer:
         """Sets the value of the indicated variable (including functions,
         typedefs, etc) within the current scope, creating it if necessary."""
         scope = self.scopes[-1]
         if name in scope:
-            scope[name].contents = value
+            ptr = scope[name]
+            ptr.contents = value
+            return ptr
         else:
-            scope[name] = Pointer(value)
+            ptr = Pointer(value)
+            scope[name] = ptr
+            return ptr
 
     def declare_tagged(self, tagged: CTagged):
         # Struct/union/enum tags use the same scoping mechanism as everything
@@ -1110,6 +1139,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             {'c': 98}
             >>> mini.eval('typedef int Integer;')
             {'Integer': TypeDef('Integer')}
+            >>> mini.eval('typedef struct T T;')
+            {'T': TypeDef('T')}
+            >>> mini.eval('typedef struct T { int x; } T;')
+            {'T': TypeDef('T')}
             >>> mini.eval('int add();')
             {'add': add(...)}
             >>> mini.eval('int data[3];')
@@ -1181,8 +1214,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
                     self.declare_var(name, value)
                 else:
                     scope = self.scopes[-1]
-                    if name in scope:
-                        # This variable is already initialized!.. so don't
+                    if scope.get(name) is not None:
+                        # This variable is already initialized (with a
+                        # non-None, i.e. non-void, value)!.. so don't
                         # overwrite with a fresh Struct.
                         # In particular, we don't want to have function
                         # prototypes overwrite the actual functions!..
@@ -1711,6 +1745,32 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
             return self._postfix_reference_operator(value, match.children[-1])
 
     def call_func(self, func: Function, *param_values) -> Value:
+        if self.debug_func_calls:
+            indent = '  ' * len(self.func_calls)
+            print(indent + f'Calling: {func.name}')
+            if self.debug_func_calls >= 2:
+                for i, param_value in enumerate(param_values):
+                    print(indent + f'Param {i}: {param_value!r}')
+        self.func_calls.append((func, param_values))
+        retval = NO_DEFAULT
+        ex = NO_DEFAULT
+        try:
+            retval = self._call_func(func, *param_values)
+            return retval
+        except Exception as _ex:
+            ex = _ex
+            raise ex
+        finally:
+            self.func_calls.pop()
+            if self.debug_func_calls:
+                print(indent + f'Returning from: {func.name}')
+                if self.debug_func_calls >= 2:
+                    if retval is not NO_DEFAULT:
+                        print(indent + f'Return value: {retval!r}')
+                    elif ex is not NO_DEFAULT:
+                        print(indent + f'Raising: {ex.__class__.__name__}: {ex}')
+
+    def _call_func(self, func: Function, *param_values) -> Value:
         with self.new_scope() as scope:
             n_missing_params = len(func.params) - len(param_values)
             if n_missing_params:

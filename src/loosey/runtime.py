@@ -39,6 +39,7 @@ def pprint_value(value: Value,
         max_struct_entries: Optional[int] = None,
         max_pointer_entries: Optional[int] = 50,
         print_kwargs={},
+        base_indent: str = '',
         ):
     r"""Pretty-prints a C value
 
@@ -132,7 +133,8 @@ def pprint_value(value: Value,
         def print_line(msg, depth=depth, key=key):
             nonlocal address
             address_msg = hex(address).rjust(address_width)
-            print_prefix = f"{address_msg}: " + ('. ' if dots else '  ') * depth
+            print_prefix = base_indent
+            print_prefix += f"{address_msg}: " + ('. ' if dots else '  ') * depth
             if key is not None:
                 print_prefix = f'{print_prefix}{key!r}: '
             address += 1
@@ -1093,8 +1095,12 @@ class Pointer:
             # means that we can have a nice __repr__ which is actually
             # accurate.
             mem = MemoryBlock(mem, size=1)
-        self.__dict__['mem'] = mem
-        self.__dict__['index'] = index
+        self.mem = mem
+        self.index = index
+        self.change_handlers = []
+
+    def add_change_handler(self, handler):
+        self.change_handlers.append(handler)
 
     def pprint(self, **kwargs):
         pprint_value(self, **kwargs)
@@ -1211,6 +1217,8 @@ class Pointer:
     __radd__ = __add__
 
     def __setitem__(self, index: int, value: Value):
+        for handler in self.change_handlers:
+            handler(index, value)
         self.mem[self.index + index] = value
 
     def __getitem__(self, index: int) -> Value:
