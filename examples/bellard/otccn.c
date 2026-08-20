@@ -2,7 +2,8 @@
 
     I downloaded this from: https://www.bellard.org/otcc/
     I mostly just added doctests, but in some cases I factored out a function
-    so that I could use or test it directly, e.g. init().
+    or macro so that I could use or test it directly, e.g. init() and
+    MAGIC_TOKEN_STRING.
 
     - BAG, 2026
 
@@ -30,22 +31,67 @@
 */
 /*
 
+    Note, the supported subset of C, according to https://www.bellard.org/otcc/, is:
+    * Expressions:
+      * binary operators, by decreasing priority order: '*' '/' '%', '+' '-', '>>' '<<',
+        '<' '<=' '>' '>=', '==' '!=', '&', '^', '|', '=', '&&', '||'.
+      * '&&' and '||' have the same semantics as C : left to right evaluation and early exit.
+      * Parenthesis are supported.
+      * Unary operators: '&', '*' (pointer indirection), '-' (negation), '+', '!', '~',
+        post fixed '++' and '--'.
+      * Pointer indirection ('*') only works with explicit cast to 'char *', 'int *'
+        or 'int (*)()' (function pointer).
+      * '++', '--', and unary '&' can only be used with variable lvalue (left value).
+      * '=' can only be used with variable or '*' (pointer indirection) lvalue.
+      * Function calls are supported with standard i386 calling convention.
+        Function pointers are supported with explicit cast.
+        Functions can be used before being declared.
+    * Types: only signed integer ('int') variables and functions can be declared.
+      Variables cannot be initialized in declarations.
+      Only old K&R function declarations are parsed (implicit integer return value
+      and no types on arguments).
+    * Any function or variable from the libc can be used because OTCC uses the libc
+      dynamic linker to resolve undefined symbols.
+    * Instructions: blocks ('{' '}') are supported as in C. 'if' and 'else' can be
+      used for tests.
+      The 'while' and 'for' C constructs are supported for loops.
+      'break' can be used to exit loops.
+      'return' is used for the return value of a function.
+    * Identifiers are parsed the same way as C. Local variables are handled, but
+      there is no local name space (not a problem if different names are used for
+      local and global variables).
+    * Numbers can be entered in decimal, hexadecimal ('0x' or '0X' prefix), or
+      octal ('0' prefix).
+    * '#define' is supported without function like arguments.
+      No macro recursion is tolerated. Other preprocessor directives are ignored.
+    * C Strings and C character constants are supported. Only '\n', '\"', '\''
+      and '\\' escapes are recognized.
+    * C Comments can be used (but no C++ comments).
+    * No error is displayed if an incorrect program is given.
+    * Memory: the code, data, and symbol sizes are limited to 100KB (it can be
+      changed in the source code).
+
     And now, doctests (by BAG)!
 
     >>> from io import BytesIO
     >>> from loosey.mini import MiniC
 
+    These are the global C variables.
+    We list them here so that later on we can set up e.g. watches for
+    when their values change.
     >>> globvars = (
     ...     'tok', 'tokc', 'tokl', 'ch', 'vars', 'rsym', 'prog', 'ind',
     ...     'loc', 'glo', 'file', 'sym_stk', 'dstk', 'dptr', 'dch', 'last_id')
 
+    Helper function to create a new MiniC interpreter, using the given input.
+    We use a BytesIO which the C code reads from as if it were stdin.
     >>> def new_mini(input: bytes, **kwargs) -> MiniC:
     ...     kwargs.setdefault('handle_errors', True)
     ...     mini = MiniC(**kwargs)
     ...     mini.eval('#include <string.h>')
     ...     mini.eval('#include <ctype.h>')
     ...     mini.eval('#include <stdlib.h>')
-    ...     mini.eval_file('otccn.c')
+    ...     mini.eval_file('examples/bellard/otccn.c')
     ...     file = BytesIO(input)
     ...     mini.set_var('file', file)
     ...     mini.eval('init();')
@@ -69,13 +115,13 @@
     ...     mini.eval('inp(); putchar(ch);')
     abc/123
 
-    Let's start over, with the input '12 + 34'.
-    We'll attempt to parse that as an expression.
+    Let's see what happens when we try to get a token.
+    We'll attempt to parse the expression '12 + 34'.
     >>> mini = new_mini(b'12 + 34')
     >>> mini.watch_vars(*globvars)
     >>> mini.debug_func_calls = 1
     >>> mini.add_debug_func_filter(lambda func:
-    ...     func.match.token.filename == 'otccn.c')
+    ...     func.match.token.filename.endswith('otccn.c'))
 
     Now, we call inp() to load the first character of input, and then next()
     to get the first token:
@@ -136,6 +182,110 @@
     >>> (dstk - 51).as_c_string()
     b' int if else while break return for define main  12'
 
+    Remember, the input was '12 + 34'.
+    Let's turn off a lot of the debugging stuff, and try to get the next
+    two tokens, '+' and '34'.
+    Here's how we parse the '+'. Ready?..
+    >>> mini.eval('next();')
+    Calling: next
+      Calling: inp
+        Watched ch change to: 43
+      Returning from: inp
+      Watched tokl change to: 0
+      Watched tok change to: 43
+      Calling: isid
+      Returning from: isid
+      Calling: inp
+        Watched ch change to: 32
+      Returning from: inp
+      Calling: magic
+        Watched tokc change to: 0
+        Watched tokl change to: -63
+        Watched tokc change to: 1
+        Watched tokl change to: 11
+        Watched tokc change to: 0
+        Watched tokl change to: -61
+        Watched tokc change to: 3
+        Watched tokl change to: -1
+        Watched tokc change to: 255
+        Watched tokl change to: 11
+        Watched tokc change to: 0
+        Watched tokl change to: -16
+        Watched tokc change to: 48
+        Watched tokl change to: -38
+        Watched tokc change to: 3098
+        Watched tokl change to: -4
+        Watched tokc change to: 198332
+        Watched tokl change to: -49
+        Watched tokc change to: 12693263
+        Watched tokl change to: 1
+        Watched tokc change to: 0
+        Watched tokl change to: -61
+        Watched tokc change to: 3
+        Watched tokl change to: -7
+        Watched tokc change to: 249
+        Watched tokl change to: -3
+        Watched tokc change to: 15997
+        Watched tokl change to: -7
+        Watched tokc change to: 1023865
+        Watched tokl change to: -26
+        Watched tokc change to: 65527398
+        Watched tokl change to: -47
+        Watched tokc change to: 4193753489
+        Watched tokl change to: 1
+        Watched tokc change to: 0
+        Watched tokl change to: -61
+        Watched tokc change to: 3
+        Watched tokl change to: -7
+        Watched tokc change to: 249
+        Watched tokl change to: -3
+        Watched tokc change to: 15997
+        Watched tokl change to: -7
+        Watched tokc change to: 1023865
+        Watched tokl change to: -26
+        Watched tokc change to: 65527398
+        Watched tokl change to: -47
+        Watched tokc change to: 4193753489
+        Watched tokl change to: 1
+        Watched tokc change to: 0
+        Watched tokl change to: -52
+        Watched tokc change to: 12
+        Watched tokl change to: -32
+        Watched tokc change to: 800
+        Watched tokl change to: -63
+        Watched tokc change to: 51201
+        Watched tokl change to: 2
+      Returning from: magic
+    Returning from: next
+
+    ...wow. Was that what you expected?
+    Something crazy is going on in the magic() function.
+    First of all, notice how early on, `ch` and then `tok` are set to 43.
+    That's the '+' character:
+    >>> ord('+')
+    43
+
+    We then see an incredible dance between `tokc` and `tokl`.
+    If you look in the magic() function, you will see it making use of this
+    strange string literal:
+    >>> mini.eval('MAGIC_TOKEN_STRING')
+    "++#m--%am*@R<^1c/@%[_[H3c%@%[_[H3c+@.B#d-@%:_^BKd<<Z/03...
+
+    And magic() largely consists of this fancy while-loop:
+
+        t = MAGIC_TOKEN_STRING;
+        while (l = *(char *)t++) {
+            a = *(char *)t++;
+            tokc = 0;
+            while ((tokl = *(char *)t++ - 'b') < 0)
+                tokc = tokc * 64 + tokl + 64;
+            if (l == tok & (a == ch | a == '@')) {
+                // We exit the while-loop!..
+
+    ...so it looks like information about the various operators is encoded
+    in the magic string, somehow...
+    TODO: investigate that!
+
 */
 #ifndef TINY
 #include <stdarg.h>
@@ -155,7 +305,9 @@ int tok, tokc, tokl, ch, vars, rsym, prog, ind, loc, glo, file, sym_stk, dstk, d
 
 #define ALLOC_SIZE 99999
 
-/* depends on the init string */
+#define MAGIC_TOKEN_STRING "++#m--%am*@R<^1c/@%[_[H3c%@%[_[H3c+@.B#d-@%:_^BKd<<Z/03e>>`/03e<=0f>=/f<@.f>@1f==&g!=\'g&&k||#l&@.BCh^@.BSi|@.B+j~@/%Yd!@&d*@b"
+
+/* depends on the init string (i.e. MAGIC_TOKEN_STRING?.. - BAG) */
 #define TOK_STR_SIZE 48
 #define TOK_IDENT    0x100
 #define TOK_INT      0x100
@@ -213,10 +365,32 @@ getq()
     }
 }
 
-next()
+magic()
 {
     int t, l, a;
 
+    t = MAGIC_TOKEN_STRING;
+    while (l = *(char *)t++) {
+        a = *(char *)t++;
+        tokc = 0;
+        while ((tokl = *(char *)t++ - 'b') < 0)
+            tokc = tokc * 64 + tokl + 64;
+        if (l == tok & (a == ch | a == '@')) {
+#if 0
+            printf("%c%c -> tokl=%d tokc=0x%x\n",
+                   l, a, tokl, tokc);
+#endif
+            if (a == ch) {
+                inp();
+                tok = TOK_DUMMY; /* dummy token for double tokens */
+            }
+            break;
+        }
+    }
+}
+
+next()
+{
     while (isspace(ch) | ch == '#') {
         if (ch == '#') {
             inp();
@@ -287,26 +461,8 @@ next()
             }
             inp();
             next();
-        } else
-        {
-            t = "++#m--%am*@R<^1c/@%[_[H3c%@%[_[H3c+@.B#d-@%:_^BKd<<Z/03e>>`/03e<=0f>=/f<@.f>@1f==&g!=\'g&&k||#l&@.BCh^@.BSi|@.B+j~@/%Yd!@&d*@b";
-            while (l = *(char *)t++) {
-                a = *(char *)t++;
-                tokc = 0;
-                while ((tokl = *(char *)t++ - 'b') < 0)
-                    tokc = tokc * 64 + tokl + 64;
-                if (l == tok & (a == ch | a == '@')) {
-#if 0
-                    printf("%c%c -> tokl=%d tokc=0x%x\n", 
-                           l, a, tokl, tokc);
-#endif
-                    if (a == ch) {
-                        inp();
-                        tok = TOK_DUMMY; /* dummy token for double tokens */
-                    }
-                    break;
-                }
-            }
+        } else {
+            magic();
         }
     }
 #if 0
