@@ -16,7 +16,7 @@ pytest
 ./minictests.sh -m loosey
 
 # Run doctests on various public-facing documentation files
-python -m doctest -f README.md
-python -m doctest -f examples/cpython/reverse_slice.c
-python -m doctest -f examples/regexp-bytecode.c
-python -m doctest -f examples/sqlite/hash.c
+./doctest.sh README.md
+./doctest.sh examples/cpython/reverse_slice.c
+./doctest.sh examples/regexp-bytecode.c
+./doctest.sh examples/sqlite/hash.c
