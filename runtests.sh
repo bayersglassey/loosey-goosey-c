@@ -20,3 +20,4 @@ pytest
 ./doctest.sh examples/cpython/reverse_slice.c
 ./doctest.sh examples/regexp-bytecode.c
 ./doctest.sh examples/sqlite/hash.c
+./doctest.sh examples/bellard/otccn.c

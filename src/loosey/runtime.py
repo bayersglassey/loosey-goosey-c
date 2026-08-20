@@ -164,7 +164,9 @@ def pprint_value(value: Value,
             else:
                 visited[id(value.mem)] = address
                 print_line(f"Pointer (offset={value.index}) into memory:")
-                all_int = all(isinstance(mem_value, int)
+                all_int = all(
+                    isinstance(mem_value, int) or
+                    mem_value == 0 # e.g. empty Struct
                     for mem_index, mem_value in value.mem.items())
                 if all_int:
                     print_line(f"As a C string: {value.as_c_string()}", depth + 1, key=None)

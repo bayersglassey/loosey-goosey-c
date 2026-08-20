@@ -229,10 +229,10 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.scopes: list[dict[str, Pointer]] = [self.global_scope]
 
         # Add some helper functions
+        self.add_python_func(print)
         self.add_python_func(self.runtime_error, '__loosey_error__')
         self.add_python_func(self.trace, '__loosey_trace__')
-        self.add_python_func(print)
-        self.add_python_func(pprint_value, 'pprint')
+        self.add_python_func(self.pprint, 'pprint')
 
         # Add some default stdlib functions
         self.stdlib = CStdlib()
@@ -316,6 +316,9 @@ class MiniC(GrammarEvaluatorWithPreprocessor):
         self.func_calls = []
         self.debug_func_calls = debug_func_calls
         self.debug_func_filters = []
+
+    def pprint(self, value: Value, **kwargs):
+        return pprint_value(value, **kwargs)
 
     def watch_var(self, name: str, *, watch_current_value: bool = True):
         # NOTE: we declare the var with a value of None, i.e. void, so that
